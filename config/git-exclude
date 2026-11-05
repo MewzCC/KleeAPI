@@ -1,0 +1,15 @@
+# 新仓库的本地防护规则；各目录内的 .gitignore 随源码保留。
+node_modules/
+**/node_modules/
+**/data/
+**/credentials/
+**/auths/
+**/*.cred
+**/*.key
+**/*.log
+**/*.pid
+**/.env*
+runtime/node.exe
+runtime/manager.json
+runtime/*.json
+frontend/dist/

@@ -1,0 +1,6 @@
+{
+  "workbuddy": { "port": 18791 },
+  "trae": { "port": 17864 },
+  "qoder": { "port": 17865 },
+  "gateway": { "port": 18887, "aliases": {} }
+}

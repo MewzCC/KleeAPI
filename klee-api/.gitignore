@@ -1,0 +1,9 @@
+**/data/
+**/credentials/
+**/auths/
+**/node_modules/
+**/*.log
+**/*.pid
+**/*.key
+**/*.cred
+**/.env*

@@ -1,0 +1,17 @@
+{
+  "name": "klee-api",
+  "version": "1.0.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "engines": { "node": ">=22.12.0" },
+  "scripts": {
+    "setup": "npm --prefix frontend ci",
+    "typecheck": "npm --prefix frontend run typecheck",
+    "build": "npm --prefix frontend run build",
+    "start": "node scripts/manager.mjs start",
+    "stop": "node scripts/manager.mjs stop",
+    "dev": "node scripts/manager.mjs dev",
+    "status": "node scripts/manager.mjs status"
+  }
+}

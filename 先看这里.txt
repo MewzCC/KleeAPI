@@ -1,0 +1,11 @@
+KleeAPI 新版启动说明
+
+1. 初次运行：安装 Node.js 22.12+（包含 npm），在当前目录执行 npm run setup，然后 npm run build。
+2. 双击 Start-Manager.cmd，等待自动打开 http://127.0.0.1:18887/admin。
+3. 关闭时双击 Stop-Manager.cmd；仅停止本目录管理器拥有的服务。
+4. npm start 可在终端前台启动，npm run status 查看状态，npm stop 停止。
+5. 日志：runtime/logs。端口配置：klee-config.json。Trae 回调端口18080若被占用，仅禁用新项目 Trae 官方网页登录，API和导入仍可用。
+6. 源码不带便携 node.exe、前端编译产物和私有账号。此工作目录已有便携 Node，可供编译后的便携运行。
+7. 首次真实启动会创建全新的私有账号存储与 API Key，没有迁移旧版账号；请自行登录或导入。
+
+完整说明见 README.md。
