@@ -2,6 +2,8 @@
 
 独立的 Vue 3 + TypeScript + Vite + Element Plus 管理界面，配合 Node.js 本地 API 与统一网关。账号数据按 WorkBuddy、Trae、Qoder 隔离保存。本目录不包含原项目的 Git 历史、账号、Key 或日志。
 
+`feat/klee-adventure-theme` 分支提供可选的可莉主题：默认保留原深色界面，右上角「开启可莉主题」切换全站粉色手账、二创毛绒玩偶与动态贴纸。选择会在浏览器保存，并通过平台入口延续到各工作空间；关闭即恢复原样。右下角旅行便笺可暂停装饰动效，全站无声且遵循系统减少动态效果设置。使用与素材说明见 [主题说明](docs/KLEE-THEME.md) 和 [NOTICE](docs/NOTICE.md)。
+
 首次从源码运行需要 Node.js 22.12 及以上和 npm。在项目根目录执行：
 
 ```powershell

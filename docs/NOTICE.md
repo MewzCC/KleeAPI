@@ -12,3 +12,15 @@ KleeAPI 当前实现围绕平台现有接口重新编写，后端、平台适配
 便携运行时 Node.js 的许可证位于项目根目录下的 `runtime/Node-LICENSE.txt`。
 
 前端使用 Vue、Vite、TypeScript 和 Element Plus；依赖版本固定在 frontend/package-lock.json，对应许可证保留在各 npm 包中。
+
+## 可莉主题素材
+
+网站采用非官方可莉同人主题；可莉、嘟嘟可及原神相关角色素材的权利归 HoYoverse 所有，不属于本项目 MIT 许可的授权范围。
+
+- `frontend/src/assets/klee/klee-splash.png`：可莉角色展示图，来源 [Enka.Network](https://enka.network/ui/UI_Gacha_AvatarImg_Klee.png)。
+- `frontend/src/assets/klee/klee-avatar.png`：可莉头像，来源 [Enka.Network](https://enka.network/ui/UI_AvatarIcon_Klee.png)。
+- 两枚四叶草 SVG 沿用原项目绘制的主题装饰。
+- `frontend/src/assets/klee/klee-plush.png`：使用内置图像生成工具制作的可莉与嘟嘟可毛绒玩偶二创，非官方周边商品图；角色权利仍归原权利人所有。提示词见 [主题说明](KLEE-THEME.md)。
+- `frontend/src/components/KleeSticker.vue`：本项目手绘的嘟嘟可、爱心信封与四叶草饼干 SVG 贴纸，使用 CSS 实现眨眼、轻摆与漂浮。
+
+原角色素材从原项目 `feat/klee-adventure-theme` 分支复制，新增二创素材与其一起本地打包；浏览页面不向素材站发起图片请求，未开启主题时不加载角色图片。主题不加载音频、视频、第三方脚本或字体；旅行便笺支持收起、Esc 关闭与暂停装饰动效，并遵循系统减少动态效果偏好。

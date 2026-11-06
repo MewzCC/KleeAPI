@@ -4,6 +4,8 @@ import ElementPlus from 'element-plus'
 import 'element-plus/dist/index.css'
 import 'element-plus/theme-chalk/dark/css-vars.css'
 import './style.css'
+import './klee-theme.css'
+import { initializeDecoration } from './modules/decoration'
 import App from './App.vue'
 import PortalView from './views/PortalView.vue'
 import WorkspaceView from './views/WorkspaceView.vue'
@@ -14,4 +16,5 @@ const router = createRouter({ history: createWebHistory(), routes: [
 ] })
 // 路由首次导航完成后再读取并清除 fragment，避免首次导航把密钥重新写回地址栏。
 const app = createApp(App).use(router).use(ElementPlus)
+initializeDecoration()
 void router.isReady().then(() => app.mount('#app'))

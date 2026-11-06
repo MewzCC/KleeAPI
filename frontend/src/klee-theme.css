@@ -1,0 +1,326 @@
+/* 可莉的冒险手账：共享展示主题，不参与账号、额度和网关请求。 */
+:root.klee-theme {
+  color-scheme: light;
+  color: #49392f;
+  background: #f7f1e6;
+  font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+  --accent: #b93838;
+  --surface: #fffdf8;
+  --border: #e7dac9;
+  --muted: #796958;
+  --el-color-primary: #b93838;
+  --el-color-primary-light-3: #ce7474;
+  --el-color-primary-light-5: #dc9c9c;
+  --el-color-primary-light-7: #eac4c4;
+  --el-color-primary-light-8: #f1d7d7;
+  --el-color-primary-light-9: #f8ebeb;
+  --el-color-primary-dark-2: #942d2d;
+  --el-color-success: #42765a;
+  --el-color-warning: #936019;
+  --el-color-danger: #b63136;
+  --el-color-error: #b63136;
+  --el-color-info: #796958;
+  --el-bg-color: #fffdf8;
+  --el-bg-color-page: #f7f1e6;
+  --el-bg-color-overlay: #fffdf8;
+  --el-fill-color: #f4e9d9;
+  --el-fill-color-light: #faf3e8;
+  --el-fill-color-lighter: #fcf8f0;
+  --el-fill-color-extra-light: #fdfaf5;
+  --el-fill-color-dark: #eadac4;
+  --el-fill-color-darker: #dfc6a5;
+  --el-fill-color-blank: #fffdf8;
+  --el-border-color: #d9c9b4;
+  --el-border-color-light: #e7dac9;
+  --el-border-color-lighter: #eee3d4;
+  --el-border-color-extra-light: #f2e9dc;
+  --el-text-color-primary: #49392f;
+  --el-text-color-regular: #634c3c;
+  --el-text-color-secondary: #796958;
+  --el-text-color-placeholder: #867460;
+  --el-text-color-disabled: #9c8f7f;
+  --el-disabled-bg-color: #f4ede2;
+  --el-disabled-text-color: #9c8f7f;
+  --el-disabled-border-color: #e7dac9;
+  --el-mask-color: #49392f66;
+  --el-box-shadow-light: 0 8px 28px #76503918;
+}
+:root.klee-theme body { background: radial-gradient(circle at 85% 8%, #ecd9b366, transparent 35%), radial-gradient(#c5a57e35 .8px, transparent .8px), #f7f1e6; background-size: auto, 20px 20px, auto; }
+:root.klee-theme .gateway, :root.klee-theme .workbuddy, :root.klee-theme .trae, :root.klee-theme .qoder { --accent: #b93838; }
+:root.klee-theme h1, :root.klee-theme h2, :root.klee-theme h3 { color: #49392f; }
+:root.klee-theme a:hover { color: var(--accent); }
+:root.klee-theme button:focus-visible, :root.klee-theme a:focus-visible, :root.klee-theme summary:focus-visible { outline: 3px solid var(--accent); outline-offset: 4px; }
+:root.klee-theme pre, :root.klee-theme .endpoint, :root.klee-theme .chat-log { background: #faf4e9; }
+:root.klee-theme .el-button { --el-button-hover-text-color: #942d2d; --el-button-hover-bg-color: #f4e5d2; --el-button-hover-border-color: #b58b62; min-height: 40px; }
+:root.klee-theme .el-button--primary { color: #fffaf1; --el-button-hover-text-color: #fffaf1; --el-button-hover-bg-color: #942d2d; --el-button-hover-border-color: #942d2d; }
+:root.klee-theme .el-input__wrapper, :root.klee-theme .el-textarea__inner { background: #fffdf8; }
+:root.klee-theme .el-checkbox { --el-checkbox-checked-text-color: #942d2d; }
+:root.klee-theme .error-text { color: #a02d35; }
+:root.klee-theme .sidebar { background: #a93235; border: 0; box-shadow: 4px 0 24px #683c2710; }
+:root.klee-theme .sidebar .brand { color: #fff8e7; }
+:root.klee-theme .brand-mark { font-size: 0; background: #fff6e4 url('./assets/klee/clover.svg') center / 26px no-repeat; transform: rotate(-8deg); }
+:root.klee-theme .sidebar .back-link, :root.klee-theme .sidebar .nav-label, :root.klee-theme .sidebar .local-label, :root.klee-theme .sidebar-bottom code, :root.klee-theme .sidebar-bottom a { color: #f8e2d2; }
+:root.klee-theme .sidebar .back-link:hover, :root.klee-theme .sidebar-bottom a:hover { color: #fff; text-decoration: underline; }
+:root.klee-theme .sidebar .workspace-badge { background: #ffffff0d; border-color: #e7ac9a66; color: #fff8e7; }
+:root.klee-theme .sidebar .workspace-badge small { color: #f8e2d2; }
+:root.klee-theme .sidebar .platform-symbol { background: #fff2df; color: #a33831; border-color: #fff2df; }
+:root.klee-theme .sidebar nav button { color: #f8e2d2; }
+:root.klee-theme .sidebar nav button:hover { background: #ffffff18; }
+:root.klee-theme .sidebar nav button.active { background: #fff5e4; color: #a32e31; border-color: #fff5e4; box-shadow: 0 4px 12px #70282520; }
+:root.klee-theme .sidebar-bottom { border-top: 1px dashed #e9b49b66; margin-top: auto; }
+:root.klee-theme .sidebar-bottom::before { content: '四叶草带来好运'; letter-spacing: 2px; font-size: 11px; color: #f8e2d2; }
+:root.klee-theme .sidebar .local-label i { background: #f5d59c; }
+:root.klee-theme .workspace-top { background: #fffaf2bb; color: var(--muted); }
+:root.klee-theme .slash { color: #9a8067; }
+:root.klee-theme .page-content { padding-bottom: 110px; }
+:root.klee-theme .page-heading { position: relative; padding: 22px 24px; border: 1px solid var(--border); border-radius: 16px; background: linear-gradient(110deg, #fffaf1, #f3e2cb); overflow: hidden; }
+:root.klee-theme .page-heading::after { content: ''; position: absolute; right: 160px; top: -35px; width: 155px; height: 155px; background: url('./assets/klee/clover.svg') center / contain no-repeat; opacity: .07; pointer-events: none; }
+:root.klee-theme .page-heading > * { position: relative; z-index: 1; }
+:root.klee-theme .workspace-version { color: #796958; border-color: #dcbda0; background: #fff9ec; }
+:root.klee-theme .panel { box-shadow: 0 5px 18px #76503905; }
+:root.klee-theme .key-panel { background: linear-gradient(110deg, #fff6e7, #fffdf8); }
+:root.klee-theme .section-heading h2::before { content: ''; display: inline-block; width: 16px; height: 16px; margin-right: 8px; background: url('./assets/klee/clover.svg') center / contain no-repeat; vertical-align: -2px; }
+:root.klee-theme .stats, :root.klee-theme .model-card, :root.klee-theme .result-card { background: #faf4e9; }
+:root.klee-theme .count, :root.klee-theme .avatar { color: #8a5038; background: #f2e5d3; }
+:root.klee-theme .model-card code { color: #796958; }
+:root.klee-theme .bubble { background: #f4e9d9; }
+:root.klee-theme .bubble.user { background: #f0dcc9; }
+:root.klee-theme .empty { color: var(--muted); }
+:root.klee-theme .local-label, :root.klee-theme .workspace-footer, :root.klee-theme .sidebar-bottom code { overflow-wrap: anywhere; }
+
+/* 门户沿用 Vue 的平台入口与端口绑定，仅替换冒险手账的视觉。 */
+:root.klee-theme body .portal {
+  --portal-border: #e7dac9; --portal-muted: #796958;
+  color: #49392f; background: transparent; gap: 26px;
+  padding-top: 24px; padding-bottom: 100px;
+}
+:root.klee-theme .portal .portal-brand { color: #7b352e; }
+:root.klee-theme .portal .portal-mark { font-size: 0; background: #b93838 url('./assets/klee/clover-light.svg') center / 30px no-repeat; transform: rotate(-8deg); }
+:root.klee-theme .portal .portal-local { color: #9b3b32; background: #fff9ec; border-color: #dcbda0; border-radius: 20px; }
+:root.klee-theme .portal .portal-main { gap: 24px; display: flex; flex-direction: column; }
+:root.klee-theme .portal .portal-hero { position: relative; min-height: 390px; padding: 48px 44px; isolation: isolate; border: 1px solid #e3ceb0; border-radius: 24px; background: linear-gradient(115deg, #fffaf0 15%, #f5e8ce 72%, #efdab7); overflow: hidden; }
+:root.klee-theme .portal-hero::before { content: ''; position: absolute; z-index: -1; inset: 18px; border: 1px dashed #ceb38a; border-radius: 13px; pointer-events: none; }
+:root.klee-theme .portal-hero::after { content: ''; position: absolute; z-index: -1; width: 320px; height: 320px; right: 80px; top: 36px; border: 1px solid #d7b88177; border-radius: 50%; box-shadow: 0 0 0 20px #d7b88116, 0 0 0 60px #d7b88112; pointer-events: none; }
+:root.klee-theme .hero-copy { position: relative; z-index: 2; max-width: 52%; }
+:root.klee-theme .portal .portal-hero h1 { font-size: 42px; line-height: 1.35; letter-spacing: 1px; margin: 16px 0 12px; color: #703c2f; }
+:root.klee-theme .portal-hero h1 em { font-style: normal; color: #b93838; }
+:root.klee-theme .portal .portal-intro { color: #7d624b; font-size: 14px; line-height: 1.9; max-width: 360px; }
+:root.klee-theme .hero-label { display: flex; gap: 9px; align-items: center; font-size: 11px; letter-spacing: 2px; color: #946032; }
+:root.klee-theme .hero-note { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 24px; border-top: 1px solid #dfc9a7; padding-top: 17px; font-size: 10px; letter-spacing: 1px; color: #835b3e; }
+:root.klee-theme .hero-note span { color: #b93838; }
+:root.klee-theme .hero-art { position: absolute; pointer-events: none; width: 760px; max-width: none; height: auto; right: -150px; bottom: -24px; filter: drop-shadow(0 16px 12px #92664120); z-index: 1; }
+:root.klee-theme .hero-stamp { position: absolute; right: 28px; top: 26px; z-index: 2; border: 2px solid #b9383866; border-radius: 50%; width: 70px; height: 70px; display: grid; place-content: center; text-align: center; transform: rotate(13deg); font-size: 10px; color: #b93838; line-height: 1.7; letter-spacing: 1px; }
+:root.klee-theme .klee-spark { position: absolute; pointer-events: none; color: #b8884f; font-size: 23px; z-index: 2; animation: klee-twinkle 4s ease-in-out 2; }
+:root.klee-theme .spark-one { right: 40%; top: 21px; }:root.klee-theme .spark-two { right: 45px; bottom: 40px; animation-delay: 1s; }:root.klee-theme .spark-three { left: 33%; bottom: 27px; animation-delay: .5s; }
+@keyframes klee-twinkle { 50% { opacity: .25; transform: rotate(35deg) scale(.7); } }
+:root.klee-theme .portal .portal-card { --card-accent: #a33a32; background: #fffdf8; border-color: #e7dac9; box-shadow: 0 5px 16px #8f614208; border-radius: 17px; transition: transform .2s, box-shadow .2s, border-color .2s; }
+:root.klee-theme .portal .portal-card:hover { transform: translateY(-3px); border-color: #c69a75; box-shadow: 0 12px 28px #8f614215; color: #49392f; }
+:root.klee-theme .portal .portal-card:focus-visible { outline-color: #b93838; }
+:root.klee-theme .portal .portal-card h2, :root.klee-theme .portal .portal-card h3 { color: #634232; }
+:root.klee-theme .portal .portal-symbol { background: #f5e7d2; border-color: #dfc6a5; color: #8a5d32; }
+:root.klee-theme .portal .portal-badge { background: #faf1e3; border-color: #d9c9b4; color: #79634f; }
+:root.klee-theme .portal .portal-features { color: #796958; }
+:root.klee-theme .portal .portal-port code { color: #796958; }
+:root.klee-theme .portal .portal-gateway { --card-accent: #fff1da; background: #ad3638; border-color: #a52f32; }
+:root.klee-theme .portal .portal-gateway:hover { background: #a83033; border-color: #93282b; }
+:root.klee-theme .portal .portal-gateway h2 { color: #fff6e6; }
+:root.klee-theme .portal .portal-gateway .portal-description, :root.klee-theme .portal .portal-gateway .portal-features, :root.klee-theme .portal .portal-gateway .portal-port, :root.klee-theme .portal .portal-gateway .portal-port code { color: #fff0df; }
+:root.klee-theme .portal .portal-gateway .portal-badge { background: #ffffff12; border-color: #e8b0a4; color: #fff0d8; }
+:root.klee-theme .portal .portal-gateway .portal-card-bottom { border-color: #d57d6d; }
+:root.klee-theme .portal .portal-footer { border-color: #d8c4a9; color: #796958; }
+:root.klee-theme .portal-platforms > h2::before { content: ''; display: inline-block; width: 19px; height: 19px; margin-right: 10px; background: url('./assets/klee/clover.svg') center / contain; vertical-align: -3px; }
+
+/* 原生 details 保持键盘操作，默认收起；底部留白避免遮住最后一行内容。 */
+:root.klee-theme .klee-companion { position: fixed; right: 20px; bottom: 18px; z-index: 20; color: #76513b; }
+:root.klee-theme .klee-companion summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 10px; background: #fffaf1; border: 1px solid #d7bb96; border-radius: 36px; padding: 5px 16px 5px 5px; box-shadow: 0 5px 20px #76503918; font-size: 12px; min-height: 54px; }
+:root.klee-theme .klee-companion summary::-webkit-details-marker { display: none; }
+:root.klee-theme .klee-companion summary img { width: 42px; height: 42px; border-radius: 50%; background: #f3dfbe; }
+:root.klee-theme .klee-companion summary span::after { content: ' +'; color: #b93838; }
+:root.klee-theme .klee-companion[open] summary span::after { content: ' −'; }
+:root.klee-theme .companion-note { position: absolute; bottom: 70px; right: 0; width: 270px; max-width: calc(100vw - 32px); max-height: calc(100dvh - 110px); overflow: auto; padding: 20px; background: #fffaf1; border: 1px solid #d7bb96; border-radius: 16px; box-shadow: 0 12px 35px #76503920; }
+:root.klee-theme .companion-note h2 { font-size: 16px; color: #a33831; }
+:root.klee-theme .companion-note p { font-size: 12px; margin: 10px 0 15px; color: #796958; }
+:root.klee-theme .companion-note button { width: 100%; min-height: 44px; font-size: 12px; background: #fff2df; color: #942d2d; border: 1px solid #d7bb96; border-radius: 8px; cursor: pointer; }
+:root.klee-theme .companion-note button:hover { background: #f4e5d2; }
+:root.klee-theme .companion-note small { display: block; font-size: 10px; line-height: 1.8; margin-top: 12px; }
+:root.klee-theme .companion-note a { color: #a33831; text-decoration: underline; }
+html.klee-theme[data-klee-motion=off] :is(.klee-spark, .hero-art, .sticker-dodoco, .sticker-eyes, .sticker-letter, .sticker-cookie, .klee-desk-plush img, .companion-plush, .charm-heart, .charm-star), html.klee-theme[data-klee-motion=off] .sidebar::after { animation: none !important; }
+@media (min-width: 761px) and (min-height: 800px) {
+  :root.klee-theme .sidebar::after { content: ''; display: block; flex: 0 0 108px; width: 108px; margin: 24px auto; background: url('./assets/klee/klee-avatar.png') center / contain no-repeat; filter: drop-shadow(0 8px 7px #70282533); }
+  :root.klee-theme .sidebar-bottom { order: 2; }
+}
+@media (min-width: 761px) { :root.klee-theme .sidebar { overflow-y: auto; }:root.klee-theme .sidebar-bottom { flex-shrink: 0; } }
+@media (min-width: 761px) and (max-width: 1050px) {
+  :root.klee-theme .portal .portal-hero { padding: 38px 32px; min-height: 360px; }
+  :root.klee-theme .portal .portal-hero h1 { font-size: 35px; }
+  :root.klee-theme .hero-art { width: 650px; right: -170px; }:root.klee-theme .hero-copy { max-width: 55%; }
+}
+@media (max-width: 760px) {
+  :root.klee-theme body .portal { padding: 18px 16px 90px; gap: 20px; }
+  :root.klee-theme .portal .portal-main { gap: 20px; }
+  :root.klee-theme .portal .portal-local { font-size: 9px; letter-spacing: 0; padding: 6px 8px; }
+  :root.klee-theme .portal .portal-hero { padding: 30px 25px 240px; min-height: 0; border-radius: 19px; }
+  :root.klee-theme .portal .portal-hero h1 { font-size: clamp(26px, 7.5vw, 33px); margin: 14px 0 10px; }
+  :root.klee-theme .portal .portal-intro { font-size: 13px; }
+  :root.klee-theme .hero-copy { max-width: 100%; }:root.klee-theme .hero-label { font-size: 9px; letter-spacing: 1px; }
+  :root.klee-theme .hero-note { margin-top: 20px; font-size: 9px; gap: 8px; }
+  :root.klee-theme .hero-art { width: 540px; right: calc(50% - 285px); bottom: -26px; z-index: -1; }
+  :root.klee-theme .hero-stamp { top: auto; bottom: 160px; right: 22px; width: 56px; height: 56px; font-size: 9px; }
+  :root.klee-theme .portal-hero::after { width: 260px; height: 260px; right: calc(50% - 130px); top: auto; bottom: 0; }
+  :root.klee-theme .portal .portal-platform-grid { grid-template-columns: 1fr; }
+  :root.klee-theme .portal .portal-platform-grid .portal-card { padding: 18px 16px 18px 66px; }
+  :root.klee-theme .portal .portal-platform-grid .portal-card-top { top: 18px; left: 16px; }
+  :root.klee-theme .portal .portal-description { display: block; }
+  :root.klee-theme .portal .portal-gateway .portal-description, :root.klee-theme .portal .portal-gateway .portal-features { display: block; }
+  :root.klee-theme .portal .portal-gateway .portal-features { display: flex; }
+  :root.klee-theme .portal .portal-footer { flex-wrap: wrap; gap: 10px; }
+  :root.klee-theme .page-heading { padding: 18px; }:root.klee-theme .page-content { padding-bottom: 100px; }
+  :root.klee-theme .sidebar { position: relative; }:root.klee-theme .sidebar nav { padding: 4px; flex-wrap: wrap; overflow: visible; }:root.klee-theme .sidebar nav button { min-height: 44px; flex: 1 1 auto; }
+  :root.klee-theme .klee-companion { right: 12px; bottom: max(12px, env(safe-area-inset-bottom)); }
+  :root.klee-theme .klee-companion summary { font-size: 11px; min-height: 48px; }:root.klee-theme .klee-companion summary img { width: 36px; height: 36px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  :root.klee-theme .klee-spark { animation: none; }:root.klee-theme .portal .portal-card:hover { transform: none; }
+}
+html.klee-theme[data-klee-motion=off] .portal .portal-card:hover { transform: none; }
+
+/* 二创毛绒玩偶、手绘贴纸与奶油粉手账，只在主动开启主题后呈现。 */
+:root.klee-theme {
+  --surface: #fffdfb;
+  --border: #eed7d9;
+  --muted: #846071;
+  --accent: #b34462;
+  --el-color-primary: #b34462;
+  --el-color-primary-light-3: #cc7c94;
+  --el-color-primary-light-5: #dda5b6;
+  --el-color-primary-light-7: #eeced8;
+  --el-color-primary-light-8: #f3dfe6;
+  --el-color-primary-light-9: #f9eef2;
+  --el-color-primary-dark-2: #8f364e;
+  --el-border-color: #e4c9d1;
+  --el-border-color-light: #eed7df;
+  --el-fill-color-light: #fcf1f3;
+  --el-fill-color-blank: #fffdfb;
+  --el-text-color-secondary: #846071;
+  --el-box-shadow-light: 0 8px 28px #bc7c9718;
+  background: #fff4f5;
+}
+:root.klee-theme body {
+  background: radial-gradient(ellipse at 10% 0%, #fde0e6aa, transparent 45%), radial-gradient(ellipse at 100% 40%, #fff0da88, transparent 40%), radial-gradient(#dca5b552 .9px, transparent .9px), #fff7f5;
+  background-size: auto, auto, 18px 18px, auto;
+}
+:root.klee-theme .gateway, :root.klee-theme .workbuddy, :root.klee-theme .trae, :root.klee-theme .qoder { --accent: #b34462; }
+:root.klee-theme .sidebar { background: linear-gradient(165deg, #ae3c56, #a83644 70%, #b64858); }
+:root.klee-theme .sidebar::before { content: '୨୧'; color: #f8d7dd; font: 30px Georgia, serif; align-self: center; margin: 20px 0 0; order: 1; }
+:root.klee-theme .sidebar .brand-mark { background-color: #fff6ee; }
+:root.klee-theme .sidebar nav button.active { background: #fff3ed; color: #a53753; border-radius: 12px; }
+:root.klee-theme .sidebar-bottom { order: 3; }
+:root.klee-theme .workspace-top { background: #fff9f8c9; }
+:root.klee-theme .page-heading { border-color: #eccdd3; border-radius: 20px; background: linear-gradient(110deg, #fffafa, #fbe8e7); box-shadow: 0 5px 18px #b66a8706; }
+:root.klee-theme .page-heading::after { background-image: url('./assets/klee/clover.svg'); filter: hue-rotate(325deg); }
+:root.klee-theme .page-heading h1 { color: #704051; }
+:root.klee-theme .eyebrow { color: #aa3d5d; }
+:root.klee-theme .panel { border-radius: 18px; border-color: #ecd8dc; box-shadow: 0 4px 0 #f6e7e5, 0 10px 24px #b66a8705; }
+:root.klee-theme .key-panel { background: linear-gradient(110deg, #fff7f7, #fffdfb); }
+:root.klee-theme .stats, :root.klee-theme .model-card, :root.klee-theme .result-card { background: #fff8f7; border-radius: 14px; }
+:root.klee-theme .section-heading h2 { color: #784559; }
+:root.klee-theme .count, :root.klee-theme .avatar { background: #f9e4eb; color: #a24465; }
+:root.klee-theme .bubble { background: #faedf0; }:root.klee-theme .bubble.user { background: #f5dfe8; }
+:root.klee-theme body .portal { --portal-border: #ecd5dc; --portal-muted: #846071; }
+:root.klee-theme .portal .portal-brand { color: #a33b55; }
+:root.klee-theme .portal .portal-mark { background-color: #b64b66; box-shadow: 0 4px 0 #e8c0c5; }
+:root.klee-theme .portal .portal-local { background: #fff9f8; color: #a34a63; border-color: #e6c7d1; }
+:root.klee-theme .portal .klee-hero { min-height: 420px; padding: 46px 48px; border-color: #edcbd6; border-radius: 30px; background: radial-gradient(ellipse at 75% 30%, #ffe1e877, transparent 55%), linear-gradient(120deg, #fffbf5, #fff0f2 75%, #ffe4ed); box-shadow: 0 7px 0 #f2dee1; }
+:root.klee-theme .portal .klee-hero::before { border-color: #dfb0be; border-radius: 20px; }
+:root.klee-theme .portal .klee-hero::after { border-style: dashed; border-color: #e7b9c9; box-shadow: 0 0 0 22px #fff9f577, 0 0 0 45px #f7ccd322; }
+:root.klee-theme .klee-hero .hero-copy { max-width: 55%; }
+:root.klee-theme .klee-ribbon { display: inline-block; color: #a54b66; background: #fbe4eb; border: 1px dashed #dfaabd; border-radius: 5px; padding: 5px 14px; margin-top: 16px; font-size: 11px; transform: rotate(-2deg); }
+:root.klee-theme .portal .klee-hero h1 { color: #794752; font-size: clamp(29px, 3vw, 43px); letter-spacing: -.5px; margin: 16px 0 12px; }
+:root.klee-theme .klee-hero h1 em { color: #b24562; }
+:root.klee-theme .klee-hero .hero-label { color: #a3566d; }
+:root.klee-theme .portal .klee-hero .portal-intro { color: #846071; font-size: 13px; }
+:root.klee-theme .klee-hero .hero-note { border-color: #ebccd5; color: #9b5c73; gap: 10px; margin-top: 20px; }
+:root.klee-theme .klee-hero .hero-note span { color: #a34e68; }
+:root.klee-theme .klee-handwriting { font-family: "STKaiti", "KaiTi", cursive; font-size: 16px; }
+:root.klee-theme .klee-hero .hero-art { width: 400px; height: auto; right: 35px; bottom: 6px; filter: drop-shadow(0 12px 10px #c286a125); transform-origin: 50% 85%; animation: klee-plush-breathe 5s ease-in-out infinite; }
+:root.klee-theme .klee-hero .hero-stamp { color: #b25570; border-color: #dea5b8; border-style: dashed; right: 26px; top: 26px; background: #fff6f499; font-size: 9px; }
+:root.klee-theme .klee-hero-bow { position: absolute; right: 39%; bottom: 16px; font: 66px Georgia, serif; color: #d98da7; transform: rotate(-12deg); z-index: 2; pointer-events: none; }
+:root.klee-theme .klee-spark { color: #ce93a2; }
+:root.klee-theme .portal .portal-card { --card-accent: #ad4263; position: relative; border-color: #ead2da; border-radius: 20px; box-shadow: 0 4px 0 #f1e1e4; background: #fffdfb; }
+:root.klee-theme .portal .portal-card:hover { border-color: #d391a9; box-shadow: 0 8px 22px #bc63881c; }
+:root.klee-theme .portal .portal-platform-grid .portal-card::after { content: '୨୧'; position: absolute; top: -13px; right: 20px; color: #ce849e; font: 36px Georgia, serif; text-shadow: 0 2px #fff; transform: rotate(10deg); }
+:root.klee-theme .portal .portal-card h2, :root.klee-theme .portal .portal-card h3 { color: #784559; }
+:root.klee-theme .portal .portal-symbol { color: #a94b69; background: #fcebf0; border-color: #edc9d6; border-radius: 15px; }
+:root.klee-theme .portal .portal-badge { color: #926176; border-color: #edcedb; background: #fff5f7; }
+:root.klee-theme .portal .portal-gateway { --card-accent: #fff0e5; background: linear-gradient(110deg, #b44761, #a93d58); border-color: #a43b54; box-shadow: 0 5px 0 #e6b5c2; }
+:root.klee-theme .portal .portal-gateway:hover { background: linear-gradient(110deg, #ac3e58, #9e3550); border-color: #9a314b; }
+:root.klee-theme .portal .portal-gateway h2 { color: #fff6ed; }
+:root.klee-theme .portal .portal-gateway .portal-card-bottom { border-color: #df9aaa; }
+:root.klee-theme .portal .portal-gateway .portal-badge { background: #ffffff12; color: #fff0df; border-color: #eab5c4; }
+:root.klee-theme .portal .portal-gateway::after { content: '♡'; position: absolute; right: 26px; top: 60px; font: 80px Georgia, serif; color: #efbbc733; transform: rotate(15deg); pointer-events: none; }
+:root.klee-theme .portal-platforms > h2 { color: #8a4b65; }
+
+:root.klee-theme .klee-sticker-shelf { display: flex; align-items: center; justify-content: space-around; flex-wrap: wrap; gap: 18px; padding: 16px 24px; background: #fffaf8; border: 1px dashed #e6bfcb; border-radius: 20px; }
+:root.klee-theme .klee-shelf-title { display: flex; flex-direction: column; gap: 7px; }
+:root.klee-theme .klee-shelf-title > span { font-size: 9px; letter-spacing: 2px; color: #a45b77; }
+:root.klee-theme .klee-shelf-title strong { color: #87506a; font-size: 17px; }
+:root.klee-theme .klee-shelf-title small { color: #916779; font-size: 11px; }
+:root.klee-theme .klee-sticker-item { display: flex; flex-direction: column; align-items: center; position: relative; }
+:root.klee-theme .klee-sticker-item > span { color: #906071; font-size: 10px; background: #f9e5ed; padding: 3px 10px; border-radius: 4px; transform: rotate(-3deg); }
+:root.klee-theme .klee-sticker { overflow: visible; filter: drop-shadow(0 4px 3px #c79dad20); }
+:root.klee-theme .sticker-dodoco { transform-origin: 60px 100px; animation: klee-sticker-wiggle 4s ease-in-out infinite; }
+:root.klee-theme .sticker-eyes { transform-origin: 60px 65px; animation: klee-blink 5s linear infinite; }
+:root.klee-theme .sticker-letter { transform-origin: center; animation: klee-letter-float 5s ease-in-out infinite; }
+:root.klee-theme .sticker-cookie { transform-origin: center; animation: klee-sticker-wiggle 6s ease-in-out infinite reverse; }
+:root.klee-theme .klee-photo-sticker { object-fit: contain; width: 145px; height: 110px; background: #ffecef; padding: 6px; border: 5px solid #fff; border-bottom-width: 15px; box-shadow: 0 3px 9px #b97c9326; transform: rotate(8deg); }
+:root.klee-theme .klee-floating-charms { position: fixed; inset: 0; pointer-events: none; z-index: 0; overflow: hidden; }
+:root.klee-theme #app { position: relative; isolation: isolate; }
+:root.klee-theme .portal, :root.klee-theme .workspace { position: relative; z-index: 1; }
+:root.klee-theme .charm-heart, :root.klee-theme .charm-star { position: absolute; color: #dba4b74d; font: 34px Georgia, serif; animation: klee-letter-float 7s ease-in-out infinite; }
+:root.klee-theme .charm-one { top: 18%; right: 2%; }:root.klee-theme .charm-two { top: 60%; left: 2%; animation-delay: -3s; }:root.klee-theme .charm-three { bottom: 8%; right: 8%; animation-delay: -5s; }
+:root.klee-theme .klee-desk-plush { position: fixed; left: 15px; bottom: 14px; z-index: 3; display: flex; flex-direction: column; align-items: center; pointer-events: none; }
+:root.klee-theme .klee-desk-plush img { width: 100px; height: auto; filter: drop-shadow(0 4px 4px #b879941a); animation: klee-plush-breathe 5s ease-in-out infinite; }
+:root.klee-theme .klee-desk-plush span { font-size: 9px; color: #965872; background: #fff8f5; padding: 4px 8px; border: 1px dashed #e6baca; border-radius: 10px; }
+:root.klee-theme:has(.workspace) .klee-desk-plush { display: none; }
+:root.klee-theme .klee-companion summary { border-color: #e7bfce; background: #fff9f8; box-shadow: 0 4px 0 #f0dbe2, 0 8px 20px #b86f8e16; color: #91596f; }
+:root.klee-theme .klee-companion summary img { background: #f9dfe6; border: 2px solid #fff; }
+:root.klee-theme .companion-note { background: #fffafa; border: 1px dashed #dfa8bc; border-radius: 22px; }
+:root.klee-theme .companion-note h2 { color: #a24264; text-align: center; }
+:root.klee-theme .companion-plush { display: block; width: 150px; height: auto; margin: 0 auto 14px; animation: klee-plush-breathe 5s ease-in-out infinite; }
+:root.klee-theme .companion-note button { border-color: #e6bfd0; color: #9d3c61; background: #fcecf2; }
+:root.klee-theme .el-empty__image { background: url('./assets/klee/klee-plush.png') center / contain no-repeat; }
+:root.klee-theme .el-empty__image svg { visibility: hidden; }
+@keyframes klee-plush-breathe { 0%, 100% { transform: translateY(0) rotate(-1deg); } 50% { transform: translateY(-7px) rotate(1deg); } }
+@keyframes klee-sticker-wiggle { 0%, 70%, 100% { transform: rotate(-3deg); } 78% { transform: rotate(5deg); } 87% { transform: rotate(-5deg); } 95% { transform: rotate(3deg); } }
+@keyframes klee-letter-float { 0%, 100% { transform: translateY(0) rotate(-3deg); } 50% { transform: translateY(-6px) rotate(3deg); } }
+@keyframes klee-blink { 0%, 44%, 48%, 100% { transform: scaleY(1); } 46% { transform: scaleY(.1); } }
+@media (min-width: 761px) and (min-height: 800px) {
+  :root.klee-theme .sidebar::after { background-image: url('./assets/klee/klee-plush.png'); height: 130px; flex-basis: 130px; width: 145px; margin: 8px auto 24px; order: 2; animation: klee-plush-breathe 5s ease-in-out infinite; }
+}
+@media (max-width: 1100px) and (min-width: 761px) {
+  :root.klee-theme .portal .klee-hero { padding: 34px 32px; min-height: 390px; }
+  :root.klee-theme .klee-hero .hero-art { width: 340px; right: 2px; bottom: 12px; }
+  :root.klee-theme .portal .klee-hero h1 { font-size: 32px; }
+  :root.klee-theme .klee-hero .hero-copy { max-width: 58%; }
+  :root.klee-theme .klee-photo-sticker { display: none; }
+}
+@media (max-width: 760px) {
+  :root.klee-theme .portal .klee-hero { padding: 30px 24px 280px; min-height: 0; border-radius: 24px; }
+  :root.klee-theme .klee-hero .hero-copy { max-width: 100%; }
+  :root.klee-theme .portal .klee-hero h1 { font-size: clamp(26px, 6.7vw, 34px); }
+  :root.klee-theme .klee-hero .hero-art { width: 285px; right: calc(50% - 142px); bottom: 4px; }
+  :root.klee-theme .klee-hero .hero-stamp { top: auto; bottom: 200px; right: 18px; font-size: 8px; }
+  :root.klee-theme .klee-hero-bow { right: 16px; bottom: 30px; font-size: 48px; }
+  :root.klee-theme .klee-ribbon { font-size: 10px; padding: 5px 8px; margin-top: 12px; }
+  :root.klee-theme .klee-handwriting { font-size: 14px; }
+  :root.klee-theme .klee-sticker-shelf { gap: 10px; padding: 18px 12px; }
+  :root.klee-theme .klee-shelf-title { width: 100%; text-align: center; margin-bottom: 4px; }
+  :root.klee-theme .klee-sticker { width: 74px; height: 74px; }
+  :root.klee-theme .klee-sticker-item > span { font-size: 9px; padding: 3px 7px; }
+  :root.klee-theme .klee-photo-sticker, :root.klee-theme .klee-desk-plush, :root.klee-theme .sidebar::before { display: none; }
+  :root.klee-theme .sidebar nav { overflow: visible; }
+  :root.klee-theme .portal .portal-platform-grid .portal-card::after { top: -12px; right: 16px; font-size: 30px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  :root.klee-theme *, :root.klee-theme *::before, :root.klee-theme *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}

@@ -1,4 +1,5 @@
 import { reactive } from 'vue'
+import { kleeTheme } from './decoration'
 import type { Platform } from '../types'
 export const platforms: Platform[] = ['gateway', 'workbuddy', 'trae', 'qoder']
 export const names: Record<Platform, string> = { gateway: '统一网关', workbuddy: 'WorkBuddy', trae: 'Trae', qoder: 'Qoder' }
@@ -41,7 +42,7 @@ export async function initialize() {
   } catch (e) { session.error = safe(e) }
 }
 export function baseURL(p: Platform) { return !import.meta.env.DEV && p === session.platform ? location.origin : `${location.protocol}//${location.hostname}:${session.ports[p]}` }
-export function fragment() { const params = new URLSearchParams(); for (const p of platforms) if (session.keys[p]) params.set(p, session.keys[p]); return params.size ? '#' + params : '' }
+export function fragment() { const params = new URLSearchParams(); for (const p of platforms) if (session.keys[p]) params.set(p, session.keys[p]); params.set('theme', kleeTheme.value ? 'klee' : 'default'); return '#' + params }
 export function platformLink(p: Platform) { return (import.meta.env.DEV ? '' : baseURL(p)) + '/admin/' + p + fragment() }
 export function portalLink() { return '/admin' + fragment() }
 export function saveLocal(p: Platform, key: string, remember: boolean) {

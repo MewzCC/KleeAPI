@@ -1,19 +1,45 @@
 <script setup lang="ts">
 import { names, platformLink, platforms, session } from '../modules/session'
+import splash from '../assets/klee/klee-splash.png'
+import clover from '../assets/klee/clover.svg'
+import plush from '../assets/klee/klee-plush.png'
+import ThemeToggle from '../components/ThemeToggle.vue'
+import KleeSticker from '../components/KleeSticker.vue'
+import { kleeTheme } from '../modules/decoration'
 </script>
 
 <template>
   <div class="portal">
     <header class="portal-top">
       <a class="portal-brand" href="/admin" aria-label="KleeAPI 首页"><span class="portal-mark" aria-hidden="true">K</span><span>KleeAPI<small>LOCAL CONSOLE</small></span></a>
-      <span class="portal-local">LOCALHOST</span>
+      <div class="theme-header-actions"><span class="portal-local">{{ kleeTheme ? '四叶草的幸运连接' : 'LOCALHOST' }}</span><ThemeToggle /></div>
     </header>
     <main class="portal-main">
-      <section class="portal-hero">
+      <section v-if="kleeTheme" class="portal-hero klee-hero" aria-labelledby="adventure-title">
+        <div class="hero-copy">
+          <p class="hero-label"><img :src="clover" width="17" height="17" alt="">KLEE'S LITTLE ADVENTURE</p>
+          <span class="klee-ribbon">可莉的软乎乎秘密基地</span>
+          <h1 id="adventure-title">蹦蹦跳跳，<br><em>把灵感装进口袋 ♡</em></h1>
+          <p class="portal-intro">嘟嘟可，今天也要一起玩！<br>在四叶草和小小心愿里，连接每一份闪闪发光的灵感。</p>
+          <div class="hero-note"><span>MADE OF LITTLE HAPPY THINGS</span><span class="klee-handwriting">今天的幸运也分你一半</span></div>
+        </div>
+        <img class="hero-art" :src="plush" alt="抱着爱心抱枕的毛绒可莉与嘟嘟可玩偶二创" width="1312" height="1199" fetchpriority="high">
+        <span class="hero-stamp" aria-hidden="true">KLEE &amp; DODOCO<br>好心情收集中</span>
+        <span class="klee-hero-bow" aria-hidden="true">୨୧</span>
+        <span class="klee-spark spark-one" aria-hidden="true">✧</span><span class="klee-spark spark-two" aria-hidden="true">✧</span><span class="klee-spark spark-three" aria-hidden="true">✦</span>
+      </section>
+      <section v-else class="portal-hero">
         <p class="portal-eyebrow">ONE GATEWAY · ALL YOUR ACCOUNTS</p>
         <h1>一个入口，连接所有模型</h1>
         <p class="portal-intro">使用统一网关接入，或进入各平台管理账号与额度。</p>
       </section>
+      <aside v-if="kleeTheme" class="klee-sticker-shelf" aria-label="可莉的贴纸收藏">
+        <div class="klee-shelf-title"><span>LITTLE TREASURES</span><strong>今天也要可可爱爱</strong><small>把好心情贴满每个角落 ♡</small></div>
+        <div class="klee-sticker-item"><KleeSticker kind="dodoco" /><span>嘟嘟可陪你</span></div>
+        <div class="klee-sticker-item"><KleeSticker kind="letter" /><span>寄一封好心情</span></div>
+        <div class="klee-sticker-item"><KleeSticker kind="cookie" /><span>幸运四叶草</span></div>
+        <img class="klee-photo-sticker" :src="splash" alt="" width="2048" height="1024" loading="lazy">
+      </aside>
       <a :href="platformLink('gateway')" class="portal-card portal-gateway">
         <div class="portal-card-top"><span class="portal-symbol" aria-hidden="true">G</span><span class="portal-badge">统一调用入口</span></div>
         <h2>统一网关</h2>
@@ -22,7 +48,7 @@ import { names, platformLink, platforms, session } from '../modules/session'
         <div class="portal-card-bottom"><span class="portal-action">进入网关与接入指南 <span aria-hidden="true">↗</span></span><span class="portal-port">本地端口 <code>{{ session.ports.gateway }}</code></span></div>
       </a>
       <section class="portal-platforms" aria-labelledby="platform-heading">
-        <h2 id="platform-heading">平台账号管理</h2>
+        <h2 id="platform-heading">{{ kleeTheme ? '冒险伙伴 · 平台账号管理' : '平台账号管理' }}</h2>
         <div class="portal-platform-grid">
           <a v-for="p in platforms.filter(p => p !== 'gateway')" :key="p" :href="platformLink(p)" class="portal-card" :class="`portal-${p}`">
             <div class="portal-card-top"><span class="portal-symbol" aria-hidden="true">{{ names[p].slice(0, 1) }}</span><span class="portal-badge">独立工作空间</span></div>
@@ -37,7 +63,7 @@ import { names, platformLink, platforms, session } from '../modules/session'
       </section>
       <p class="portal-note">账号和额度仍由各平台独立管理；网关使用独立 API Key，仅调度已启用且具备对应模型可用额度的账号。</p>
     </main>
-    <footer class="portal-footer"><span>KleeAPI</span><span>本地运行 · 自由连接</span></footer>
+    <footer class="portal-footer"><span>KleeAPI</span><span>{{ kleeTheme ? '愿四叶草带来好运 · 静音陪伴' : '本地运行 · 自由连接' }}</span></footer>
   </div>
 </template>
 
