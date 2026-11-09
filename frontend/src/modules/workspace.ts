@@ -27,6 +27,7 @@ export function useWorkspace(p: Platform) {
     accounts.value = data.accounts.map(a => ({ ...a, active: a.active || a.uid === data.activeUid }))
     if (old !== accounts.value.find(a => a.active)?.uid) catalog.value = undefined
     warning.value = safe(data.warning || '')
+    if (p === 'qoder' && (accounts.value.length || tab.value === 'checkin')) void refreshCheckins()
     if (accounts.value.some(a => a.enabled !== false)) void refreshQuota()
   }) }
   async function refreshModels() { await load('models', async () => {
@@ -34,10 +35,9 @@ export function useWorkspace(p: Platform) {
     const data = await request<Catalog>(p, '/v1/models?refresh=1')
     if (uid === accounts.value.find(a => a.active)?.uid) catalog.value = data
   }) }
-  let queryTask: Promise<void> | undefined
   async function query(kind: 'quota' | 'checkins', claim?: boolean) {
-    if (queryTask) { await queryTask; if (claim !== undefined) return; }
-    const run = load('query', async () => {
+    if (busy.claim || (claim !== undefined && (busy.checkins || busy.quota))) return
+    await load(claim === undefined ? kind : 'claim', async () => {
       const data = claim === undefined
         ? await request<Snapshot>(p, kind === 'quota' ? '/api/monitor' : '/api/checkin')
         : await post<Snapshot>(p, '/api/checkin', { all: claim })
@@ -52,10 +52,7 @@ export function useWorkspace(p: Platform) {
       }
       errors[kind] = ''
     })
-    queryTask = run
-    await run
-    if (errors.query) errors[kind] = errors.query
-    if (queryTask === run) queryTask = undefined
+    if (claim !== undefined && errors.claim) errors.checkins = errors.claim
   }
   const refreshQuota = () => query('quota'), refreshCheckins = () => query('checkins')
   const claim = (all: boolean) => query('checkins', all)
@@ -112,7 +109,17 @@ export function useWorkspace(p: Platform) {
   }
   async function cancelLogin() { if (!login.value) return; const current = login.value; await load('login', async () => { await request(p, '/api/login/' + encodeURIComponent(current.id), { method: 'DELETE' }); clearTimeout(loginTimer); login.value = undefined; ElMessage.success('本次登录已取消。') }) }
   function refresh() { if (!session.keys[p]) return; if (p === 'gateway') void refreshPool(); else void refreshAccounts() }
-  watch(tab, value => { if (!session.keys[p]) return; if (value === 'quota') void refreshQuota(); if (value === 'checkin') void refreshCheckins() })
+  watch(tab, value => {
+    if (!session.keys[p]) return
+    if (value === 'quota') void refreshQuota()
+    if (value === 'checkin') {
+      const snapshot = checkins.value
+      const recent = p === 'qoder' && snapshot?.fetchedAt && !errors.checkins
+        && Date.now() - new Date(snapshot.fetchedAt).getTime() < 30000
+        && checkinRows.value.every(a => a.status !== 'unknown')
+      if (!recent) void refreshCheckins()
+    }
+  })
   const timer = setInterval(() => { if (auto.value && !document.hidden && tab.value === 'quota' && session.keys[p]) void refreshQuota() }, 60000)
   const pageShow = () => { const key = storedKey(p); if (key) session.keys[p] = key; refresh() }
   window.addEventListener('pageshow', pageShow)

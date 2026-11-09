@@ -31,8 +31,36 @@ export async function createService({platform,base=root,adapter=adapters[platfor
   async function fresh(account,force=false){
     const due=(account.expiresAt&&account.expiresAt<=Date.now()+300000)||(platform==='qoder'&&account.deviceRefreshToken&&(!account.deviceExpiresAt||account.deviceExpiresAt<=Date.now()+300000));
     if(!force&&(!due||!(account.refreshToken||(platform==='qoder'&&account.deviceRefreshToken))))return account;
-    if(!refreshing.has(account.uid))refreshing.set(account.uid,(async()=>{const original=structuredClone(account),changes=await adapter.refresh(account);return store.saveRefreshed(original,{...account,...changes});})().finally(()=>refreshing.delete(account.uid)));
+    return refreshAccount(account);
+  }
+
+  function refreshAccount(account,options){
+    if(!refreshing.has(account.uid))refreshing.set(account.uid,(async()=>{const original=structuredClone(account),changes=await adapter.refresh(account,options);return store.saveRefreshed(original,{...account,...changes});})().finally(()=>refreshing.delete(account.uid)));
     return refreshing.get(account.uid);
+  }
+
+  const upstreamUnauthorized=error=>error instanceof ApiError&&error.status===401&&error.code==='upstream_http_error';
+  const deviceReauth=()=>new ApiError('Qoder 设备授权已失效，请在账号管理中使用「官方登录」重新授权该账号。',401,'qoder_device_reauth_required');
+
+  /** Qoder 的活动和额度读取收到 401 时，复用已轮换的授权或续期一次后重读。 */
+  async function readWithDeviceRecovery(account,read){
+    try{return {account,data:await read(account)};}
+    catch(error){if(platform!=='qoder'||!upstreamUnauthorized(error))throw error;}
+    try{
+      await refreshing.get(account.uid);
+      const current=store.get(account.uid);
+      if(current.enabled===false)throw new ApiError('账号已停用',403);
+      if(current.deviceToken!==account.deviceToken||current.deviceRefreshToken!==account.deviceRefreshToken)account=current;
+      else{
+        if(!current.deviceRefreshToken)throw deviceReauth();
+        account=await refreshAccount(current,{deviceOnly:true});
+      }
+    }catch(error){
+      if(error.code==='upstream_http_error'&&[400,401,403].includes(error.status))throw deviceReauth();
+      throw error;
+    }
+    try{return {account,data:await read(account)};}
+    catch(error){if(upstreamUnauthorized(error))throw deviceReauth();throw error;}
   }
   async function importAccount(input,accept=()=>true){const account=await adapter.normalize(input);if(!accept())throw new ApiError('登录请求已取消或过期',409,'login_canceled');if(!account?.uid||typeof account.uid!=='string'||!account.accessToken)throw new ApiError('登录 JSON 缺少有效账号或令牌');const saved=await store.save(account,true);modelCache=null;pool.invalidate(saved.uid);return {account:store.list().find(a=>a.uid===saved.uid),credential:saved};}
 
@@ -48,35 +76,58 @@ export async function createService({platform,base=root,adapter=adapters[platfor
     }catch(error){if(modelCache?.uid===account.uid)return {...modelCache,source:'cache',fetchedAt:modelCache.updated_at,warning:'平台目录未能刷新，显示此账号的上次结果'};throw error;}
   }
 
+  async function mapAccountReads(read){
+    const summaries=store.list();
+    if(platform==='qoder')return Promise.all(summaries.map(read));
+    const rows=[];
+    for(const summary of summaries)rows.push(await read(summary));
+    return rows;
+  }
+
+  const checkinReads=new Map();
+  /** Qoder 只共享同一凭据正在执行的查询，领取前后的复查始终直接请求上游。 */
+  function readCheckin(account){
+    if(platform!=='qoder')return adapter.checkin(account);
+    const key=JSON.stringify([account.uid,account.region,account.providerUid,account.deviceToken,account.accessToken]);
+    if(!checkinReads.has(key)){
+      const task=readWithDeviceRecovery(account,current=>adapter.checkin(current)).then(result=>result.data);
+      checkinReads.set(key,task.finally(()=>checkinReads.delete(key)));
+    }
+    return checkinReads.get(key);
+  }
+
   async function monitor(){
-    const accounts=[];
-    for(const summary of store.list()){
-      const row={...summary,platform,unit:platform==='qoder'?(summary.region==='cn'?'Qoder CN Credits':'Qoder Global Credits'):folder[platform]+' 积分',remaining:null,limit:null,used:null,packages:[],unlimited:false,checkin:null,quotaError:null,checkinError:null};accounts.push(row);
-      if(!summary.enabled){row.quotaError='账号已停用';continue;}
-      let account;try{account=await fresh(store.get(summary.uid));row.expiresAt=account.expiresAt||null;row.status=account.expiresAt&&account.expiresAt<=Date.now()?'expired':'ready';}catch{row.status='expired';row.quotaError='登录刷新失败，请重新登录';continue;}
-      const [quota,daily]=await Promise.allSettled([adapter.quota(account),adapter.checkin(account)]);
+    const accounts=await mapAccountReads(async summary=>{
+      const row={...summary,platform,unit:platform==='qoder'?(summary.region==='cn'?'Qoder CN Credits':'Qoder Global Credits'):folder[platform]+' 积分',remaining:null,limit:null,used:null,packages:[],unlimited:false,checkin:null,checkinError:null,quotaError:null};
+      if(!summary.enabled){row.quotaError='账号已停用';return row;}
+      let account;try{account=await fresh(store.get(summary.uid));row.expiresAt=account.expiresAt||null;row.status=account.expiresAt&&account.expiresAt<=Date.now()?'expired':'ready';}catch{row.status='expired';row.quotaError='登录刷新失败，请重新登录';return row;}
+      const [quota,daily]=await Promise.allSettled([
+        readWithDeviceRecovery(account,current=>adapter.quota(current)).then(result=>result.data),
+        readCheckin(account),
+      ]);
       if(quota.status==='fulfilled'){Object.assign(row,quota.value);if(Number.isFinite(row.remaining))await store.updateCredits(account.uid,row.remaining);pool.invalidate(account.uid,false);}
       else row.quotaError=quota.reason.message||'额度查询失败';
       if(daily.status==='fulfilled')row.checkin=daily.value;else row.checkinError=daily.reason.message||'签到状态查询失败';
-    }
+      return row;
+    });
     return {platform,unit:folder[platform]+' 积分',fetchedAt:Date.now(),accounts};
   }
 
   /** 查询全部账号本轮状态，不领取奖励，也不重复读取额度；查询失败保持未知。 */
   async function checkinStatus(){
-    const accounts=[];
-    for(const summary of store.list()){
-      const row={...summary,checkedIn:null,status:'unknown',message:'签到状态尚未确认'};accounts.push(row);
-      if(!summary.enabled){row.status='skipped';row.message='账号已停用';continue;}
+    const accounts=await mapAccountReads(async summary=>{
+      const row={...summary,checkedIn:null,status:'unknown',message:'签到状态尚未确认'};
+      if(!summary.enabled){row.status='skipped';row.message='账号已停用';return row;}
       try{
-        const account=await fresh(store.get(summary.uid)),daily=await adapter.checkin(account);
+        const account=await fresh(store.get(summary.uid)),daily=await readCheckin(account);
         for(const key of ['reward','campaignId','startsAt','endsAt'])if(daily?.[key]!==undefined)row[key]=daily[key];
         if(typeof daily?.checkedIn==='boolean')row.checkedIn=daily.checkedIn;
         if(daily?.checkedIn===true){row.status='already';row.message=platform==='qoder'?'本轮已签到':'今日已签到';}
         else if(daily?.enabled===false){row.status='no_activity';row.message='当前没有可领取的签到活动';}
         else if(daily?.enabled===true&&daily?.checkedIn===false){row.status='available';row.message=platform==='qoder'?'本轮未签到':'今日未签到';}
-      }catch(error){row.message=error instanceof ApiError?error.message:'签到状态查询失败，请稍后刷新';}
-    }
+      }catch(error){row.message=platform==='qoder'&&upstreamUnauthorized(error)?deviceReauth().message:error instanceof ApiError?error.message:'签到状态查询失败，请稍后刷新';}
+      return row;
+    });
     return {platform,fetchedAt:Date.now(),accounts};
   }
 
@@ -84,7 +135,9 @@ export async function createService({platform,base=root,adapter=adapters[platfor
     const result={uid:input.uid,nickname:input.nickname,region:input.region,status:'failed',checkedIn:null,message:'签到失败',balanceBefore:null,balanceAfter:null};
     if(input.enabled===false)return {...result,status:'skipped',message:'账号已停用'};
     let account;try{
-      account=await fresh(input);const before=await adapter.checkin(account);
+      const initial=await fresh(input);
+      const {account:authorized,data:before}=await readWithDeviceRecovery(initial,current=>adapter.checkin(current));
+      account=authorized;
       if(typeof before.checkedIn==='boolean')result.checkedIn=before.checkedIn;
       for(const key of ['reward','campaignId','startsAt','endsAt'])if(before[key]!==undefined)result[key]=before[key];
       if(before.checkedIn){result.status='already';result.message='今日已签到';}
@@ -102,7 +155,7 @@ export async function createService({platform,base=root,adapter=adapters[platfor
       try{result.balanceAfter=(await adapter.quota(account)).remaining;if(Number.isFinite(result.balanceAfter))await store.updateCredits(account.uid,result.balanceAfter);}catch{}
       if(result.status==='claimed'&&result.balanceBefore!==null&&result.balanceAfter===result.balanceBefore)result.message+='，当前查询余额未变化，请核对官方积分明细';
       else if(result.status==='claimed'&&result.balanceAfter===null)result.message+='，余额暂未能读取';
-    }catch(error){result.message=error.message||'签到状态查询失败';}
+    }catch(error){result.message=platform==='qoder'&&upstreamUnauthorized(error)?deviceReauth().message:error.message||'签到状态查询失败';}
     pool.invalidate(input.uid,false);return result;
   }
 

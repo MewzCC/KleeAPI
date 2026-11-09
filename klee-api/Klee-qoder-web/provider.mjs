@@ -242,8 +242,8 @@ async function pollLogin(pending) {
   };
 }
 
-/** 刷新令牌只发送一次，必须保留轮换后的完整令牌对。 */
-async function refresh(account) {
+/** 刷新令牌只发送一次；活动接口拒绝设备令牌时可单独轮换设备授权。 */
+async function refresh(account, { deviceOnly = false } = {}) {
   account = await normalize(account);
   const cfg = site(account.region);
   if (!account.refreshToken && !account.deviceRefreshToken)
@@ -260,21 +260,22 @@ async function refresh(account) {
       throw new ApiError("Qoder 刷新返回的令牌对不完整", 502);
     return t;
   };
-  if (account.deviceChat) {
+  if (deviceOnly && !account.deviceRefreshToken)
+    throw new ApiError("Qoder 缺少设备刷新令牌，请重新登录");
+  if (account.deviceChat || deviceOnly) {
     const t = await rotate(
         "deviceToken",
-        account.refreshToken || account.deviceRefreshToken,
+        deviceOnly ? account.deviceRefreshToken : account.refreshToken || account.deviceRefreshToken,
       ),
       access = t.token || t.device_token;
+    const expiresAt = expiry(t, true);
     return {
       ...(await normalize({
         ...account,
-        accessToken: access,
-        refreshToken: t.refresh_token,
-        expiresAt: expiry(t, true),
+        ...(account.deviceChat && { accessToken: access, refreshToken: t.refresh_token, expiresAt }),
         deviceToken: access,
         deviceRefreshToken: t.refresh_token,
-        deviceExpiresAt: expiry(t, true),
+        deviceExpiresAt: expiresAt,
       })),
       refreshWarning: "",
     };
