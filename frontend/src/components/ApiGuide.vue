@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { nextTick, ref, watch } from 'vue'
-import { session } from '../modules/session'
+import { names, session } from '../modules/session'
 import { copy } from '../modules/workspace'
 import { useGuide } from '../modules/guide'
 import type { Model, Platform } from '../types'
@@ -11,7 +11,7 @@ const log = ref<HTMLElement>()
 watch(bubbles, async () => { await nextTick(); if (log.value) log.value.scrollTop = log.value.scrollHeight }, { deep: true })
 </script>
 <template>
-  <section class="panel"><div class="section-heading"><div><h2>API 接入指南</h2><p class="muted">OpenAI 兼容格式 · 示例使用占位 Key</p></div><el-button @click="copy(base)">复制 Base URL</el-button></div><code class="endpoint">{{ base }}</code><p class="muted">模型目录：{{ base }}/models<br>对话接口：{{ base }}/chat/completions</p>
+  <section class="panel"><div class="section-heading"><div><h2>API 接入指南</h2><p class="muted">OpenAI 兼容格式 · 示例使用占位 Key</p></div><el-button @click="copy(base)">复制 Base URL</el-button></div><code class="endpoint">{{ base }}</code><p class="muted">{{ platform === 'gateway' ? '应用只需配置此网关地址与网关 API Key，即可统一调用已接入的各平台模型。' : '此地址仅用于 ' + names[platform] + '，请搭配 ' + names[platform] + ' API Key。其他平台需分别配置地址与 Key，也可使用网关统一接入。' }}</p><p class="muted">模型目录：{{ base }}/models<br>对话接口：{{ base }}/chat/completions</p>
     <el-alert v-if="platform === 'qoder'" title="Qoder 支持工具、图片与推理参数；temperature 和 top_p 当前不映射到上游。" type="info" :closable="false" />
     <el-alert v-else-if="platform !== 'gateway'" title="请求参数的实际支持范围和行为取决于平台上游与所选模型。" type="info" :closable="false" />
     <el-form label-position="top" class="guide-form"><el-form-item label="模型 ID"><el-select v-model="model" filterable allow-create default-first-option placeholder="输入模型 ID" :disabled="loading"><el-option v-for="m in models" :key="m.id" :label="m.id" :value="m.id" /></el-select></el-form-item><el-form-item label="max_tokens（可选）"><el-input-number v-model="maxTokens" :min="1" :precision="0" :disabled="loading" /></el-form-item><el-form-item label="流式响应"><el-switch v-model="stream" :disabled="loading" /></el-form-item><el-form-item label="示例消息" class="full"><el-input v-model="prompt" type="textarea" :rows="2" /></el-form-item></el-form>
