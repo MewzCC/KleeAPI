@@ -7,6 +7,7 @@ import {
   constants,
 } from "node:crypto";
 import { ApiError } from "../app/http.mjs";
+import { mergeCompletionUsage } from "../app/stream.mjs";
 
 const VERSION = "1.1.69";
 const RSA_KEY = `-----BEGIN PUBLIC KEY-----
@@ -409,7 +410,7 @@ export function openaiResponse(response, model, signal, tools = []) {
                 502,
                 "upstream_error",
               );
-            if (chunk.usage) usage = chunk.usage;
+            usage = mergeCompletionUsage(usage, chunk);
             if (Array.isArray(chunk.choices))
               for (const choice of chunk.choices) {
                 if (choice.finish_reason) {

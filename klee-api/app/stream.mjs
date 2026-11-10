@@ -34,6 +34,24 @@ function toolDelta(value){
   return (Array.isArray(value)?value:value?[value]:[]).map((tool,index)=>{const f=tool.function||tool.function_call||{};return {index:tool.index??index,...(tool.id?{id:tool.id}:{}),type:'function',function:{...(f.name?{name:f.name}:{}),...(f.arguments!==undefined?{arguments:typeof f.arguments==='string'?f.arguments:JSON.stringify(f.arguments)}:{})}};});
 }
 
+/** 合并响应中的累计用量，保留明确上报的单次积分及其零值。 */
+export function mergeCompletionUsage(previous, data) {
+  const usage = data.usage;
+  const fields = usage && typeof usage === 'object' && !Array.isArray(usage) ? usage : null;
+  if (!fields && data.credits_consumed == null && data.credits_used == null && data.credits == null) return previous;
+  const credits = [
+    fields?.credits_consumed, fields?.credits_used, fields?.credits,
+    data.credits_consumed, data.credits_used, data.credits,
+    previous?.credits_consumed,
+  ].find(value => Number.isFinite(value) && value >= 0);
+  if (!fields && credits === undefined) return previous;
+  return {
+    ...previous,
+    ...fields,
+    ...(credits !== undefined ? { credits_consumed: credits } : {}),
+  };
+}
+
 /** 将平台 SSE 统一成 OpenAI 格式，同时支持流式与完整响应，不重试请求。 */
 export async function relayCompletion(response,res,{stream=false,model,format='openai',signal}={}){
   const send=value=>write(res,value,signal);
@@ -43,7 +61,10 @@ export async function relayCompletion(response,res,{stream=false,model,format='o
     if(data.error||!Array.isArray(data.choices))throw new ApiError('平台拒绝对话请求',502,'upstream_chat_error');
     if(!stream)return json(res,200,data);
     res.writeHead(200,{'Content-Type':'text/event-stream; charset=utf-8','Cache-Control':'no-cache'});
-    await send('data: '+JSON.stringify({id:data.id,object:'chat.completion.chunk',created:data.created,model:data.model||model,choices:data.choices.map(c=>({index:c.index,delta:c.message,finish_reason:c.finish_reason}))})+'\n\n');res.end('data: [DONE]\n\n');return;
+    await send('data: '+JSON.stringify({id:data.id,object:'chat.completion.chunk',created:data.created,model:data.model||model,choices:data.choices.map(c=>({index:c.index,delta:c.message,finish_reason:c.finish_reason}))})+'\n\n');
+    const usage=mergeCompletionUsage(null,data);
+    if(usage)await send('data: '+JSON.stringify({id:data.id,object:'chat.completion.chunk',created:data.created,model:data.model||model,choices:[],usage})+'\n\n');
+    res.end('data: [DONE]\n\n');return;
   }
   const id='chatcmpl-'+randomUUID(),created=Math.floor(Date.now()/1000);let content='',reasoning='',finish='stop',usage=null,started=false,total=0,terminal=false;const tools=[];
   const chunk=(delta,reason=null)=>({id,object:'chat.completion.chunk',created,model,choices:[{index:0,delta,finish_reason:reason}]});
@@ -56,9 +77,9 @@ export async function relayCompletion(response,res,{stream=false,model,format='o
       let delta={};
       if(format==='solo'){
         if(event.event==='output'){if(typeof data.response==='string')delta.content=data.response;if(typeof data.reasoning_content==='string')delta.reasoning_content=data.reasoning_content;if(data.tool_calls)delta.tool_calls=toolDelta(data.tool_calls);}
-        if(event.event==='token_usage')usage=data;
+        if(event.event==='token_usage')usage=mergeCompletionUsage(usage,{usage:data});
         if(event.event==='done'){finish=data.finish_reason||'stop';terminal=true;}
-      }else{const choice=data.choices?.[0];if(choice){delta=choice.delta||choice.message||{};if(choice.finish_reason){finish=choice.finish_reason;terminal=true;}}if(data.usage)usage=data.usage;}
+      }else{const choice=data.choices?.[0];if(choice){delta=choice.delta||choice.message||{};if(choice.finish_reason){finish=choice.finish_reason;terminal=true;}}usage=mergeCompletionUsage(usage,data);}
       if(delta.content)content+=delta.content;if(delta.reasoning_content)reasoning+=delta.reasoning_content;
       for(const tool of delta.tool_calls||[]){const index=tool.index??0;const old=tools[index]||{id:tool.id||'call-'+index,type:'function',function:{name:'',arguments:''}};if(tool.id)old.id=tool.id;if(tool.function?.name)old.function.name+=tool.function.name;if(tool.function?.arguments)old.function.arguments+=tool.function.arguments;tools[index]=old;}
       total+=JSON.stringify(delta).length;if(total>16*1024*1024)throw new ApiError('对话响应过大',502);

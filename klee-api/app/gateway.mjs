@@ -3,11 +3,12 @@ import { createServer } from "node:http";
 import { readFileSync, existsSync, mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { randomBytes, timingSafeEqual } from "node:crypto";
+import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { loadConfig, root } from "./config.mjs";
 import { atomicWrite } from "./store.mjs";
 import { ApiError, json, readBody, upstreamFetch } from "./http.mjs";
-import { parseEvents } from "./stream.mjs";
+import { mergeCompletionUsage, parseEvents } from "./stream.mjs";
+import { createUsageLog, usageFields } from "./gateway-usage.mjs";
 
 const platforms = { workbuddy: "WorkBuddy", trae: "Trae", qoder: "Qoder" };
 const keyPattern = /^klee-[\x21-\x7e]{3,251}$/;
@@ -114,7 +115,7 @@ async function write(res, value, signal) {
 }
 
 /** 只改写 OpenAI 帧的 model；保留 choices、工具调用、usage 和结束标志。 */
-async function relay(response, res, request, signal) {
+async function relay(response, res, request, signal, observe) {
   if (
     !(response.headers.get("content-type") || "").includes("text/event-stream")
   ) {
@@ -125,6 +126,7 @@ async function relay(response, res, request, signal) {
         502,
         "invalid_platform_response",
       );
+    observe(data);
     data.model = request.model;
     if (request.stream !== true) return json(res, 200, data);
     res.writeHead(200, {
@@ -192,6 +194,7 @@ async function relay(response, res, request, signal) {
         502,
         "upstream_stream_error",
       );
+    observe(data);
     data.model = request.model;
     if (!res.headersSent)
       res.writeHead(200, {
@@ -243,6 +246,11 @@ export async function createGateway({
       500,
       "invalid_api_key_format",
     );
+  const usageLog = createUsageLog(memoryKey ? undefined : join(base, "Gateway-Chat", "data", "Gateway", "usage.json"));
+  const logLabel = (value) => String(value ?? "")
+    .replace(/klee-[^\s]+/gi, "[Key 已隐藏]")
+    .replace(/[\x00-\x1f\x7f]/g, " ")
+    .slice(0, 240);
   const token = (req) =>
     /^Bearer /i.test(req.headers.authorization || "")
       ? req.headers.authorization.slice(7)
@@ -622,6 +630,22 @@ export async function createGateway({
 
   /** 槽位持续占用到响应结束；只有平台明确确认未生成的拒绝才允许换号。 */
   async function chat(req, res, request) {
+    const record = {
+      id: randomUUID(),
+      startedAt: Date.now(),
+      model: logLabel(request.model),
+      upstreamModel: null,
+      platform: null,
+      region: null,
+      account: null,
+      stream: request.stream === true,
+      attempts: 0,
+      status: "success",
+      httpStatus: 200,
+      errorCode: null,
+    };
+    const started = performance.now();
+    let usage = null;
     const controller = new AbortController();
     controllers.add(controller);
     const timer = setTimeout(
@@ -655,6 +679,11 @@ export async function createGateway({
         tried.add(id);
         try {
           if (controller.signal.aborted) throw abortError(controller.signal);
+          record.platform = candidate.account.platform;
+          record.region = logLabel(candidate.account.region);
+          record.account = logLabel(candidate.account.nickname || candidate.account.uid);
+          record.upstreamModel = logLabel(candidate.upstream);
+          record.attempts++;
           const response = await call(
             candidate.account.platform,
             "/api/pool/chat/completions",
@@ -701,7 +730,9 @@ export async function createGateway({
               continue;
             throw lastError;
           }
-          await relay(response, res, request, controller.signal);
+          await relay(response, res, request, controller.signal, (data) => {
+            usage = mergeCompletionUsage(usage, data);
+          });
           return;
         } finally {
           busy.delete(id);
@@ -718,12 +749,19 @@ export async function createGateway({
           "no_available_account",
         )
       );
+    } catch (error) {
+      const failure = controller.signal.aborted ? abortError(controller.signal) : error;
+      record.httpStatus = failure instanceof ApiError ? failure.status : 502;
+      record.errorCode = failure instanceof ApiError ? logLabel(failure.code) : "gateway_error";
+      record.status = record.httpStatus === 499 ? "canceled" : "failed";
+      throw failure;
     } finally {
       clearTimeout(timer);
       req.off("aborted", abort);
       res.off("close", close);
       controllers.delete(controller);
       controller.abort();
+      usageLog.add({ ...record, durationMs: Math.round(performance.now() - started), ...usageFields(usage) });
     }
   }
 
@@ -795,6 +833,8 @@ export async function createGateway({
         });
       if (!authorized(token(req)))
         throw new ApiError("Invalid API key", 401, "invalid_api_key");
+      if (req.method === "GET" && path === "/api/gateway/usage")
+        return json(res, 200, usageLog.snapshot());
       if (req.method === "POST" && path === "/api/key") {
         const body = await readBody(req, 4096);
         if (!keyPattern.test(body.apiKey) || typeof body.apiKey !== "string")
