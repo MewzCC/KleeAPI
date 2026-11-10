@@ -1,3 +1,18 @@
+# Private account data, credentials, dependencies, and local runtime files.
+**/node_modules/
+**/data/
+**/credentials/
+**/auths/
+**/*.cred
+**/*.key
+**/*.log
+**/*.pid
+**/.env*
+/frontend/dist/
+/runtime/*
+!/runtime/.gitignore
+!/runtime/Node-LICENSE.txt
+
 # Local browser verification artifacts.
 /.playwright-cli/
 /output/
