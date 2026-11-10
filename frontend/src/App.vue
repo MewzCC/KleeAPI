@@ -4,6 +4,7 @@ import { initialize, session } from './modules/session'
 import KleeCompanion from './components/KleeCompanion.vue'
 import KleeDecorations from './components/KleeDecorations.vue'
 import ThemeToggle from './components/ThemeToggle.vue'
+import ScrollHint from './components/ScrollHint.vue'
 import { kleeTheme } from './modules/decoration'
 onMounted(initialize)
 </script>
@@ -14,6 +15,7 @@ onMounted(initialize)
   <ThemeToggle v-if="!session.ready || session.error" class="boot-theme-toggle" />
   <KleeDecorations v-if="kleeTheme" />
   <KleeCompanion v-if="kleeTheme" />
+  <ScrollHint v-if="session.ready && !session.error" />
 </template>
 
 <style>

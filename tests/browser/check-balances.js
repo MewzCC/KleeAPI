@@ -19,8 +19,9 @@ async (page) => {
   await progress.waitFor();
   if (await progress.getAttribute('aria-valuenow') !== '93.3') throw Error('Balance must use the real 2799.5476 / 3000 ratio');
   await trae.getByText('2,799.5476', { exact: true }).waitFor();
-  const compact = await trae.locator('.balance-progress').evaluate(el => ({ height: el.getBoundingClientRect().height, title: el.title, font: parseFloat(getComputedStyle(el.querySelector('strong')).fontSize), track: el.querySelector('.balance-progress-track').getBoundingClientRect().height }));
-  if (compact.height > 25 || compact.font > 14 || compact.track > 5) throw Error('Balance should remain a compact text row with a thin progress bar');
+  const compact = await trae.locator('.balance-progress').evaluate(el => ({ height: el.getBoundingClientRect().height, title: el.title, font: parseFloat(getComputedStyle(el.querySelector('strong')).fontSize), track: el.querySelector('.balance-progress-track').getBoundingClientRect().height, valueBottom: el.querySelector('.balance-progress-value').getBoundingClientRect().bottom, meterTop: el.querySelector('.balance-progress-meter').getBoundingClientRect().top }));
+  if (compact.height > 46 || compact.font > 14 || compact.track > 5) throw Error('Balance should remain compact with a thin progress bar');
+  if (compact.meterTop < compact.valueBottom) throw Error('Progress bar and percentage must appear below the balance');
   if (!compact.title.includes('总额度 3,000')) throw Error('Quota details should remain available on hover');
   await page.waitForFunction(() => Number(getComputedStyle([...document.querySelectorAll('.account-row')].find(e => e.textContent.includes('示例 Trae 余额')).querySelector('.balance-progress-fill')).transform.match(/matrix\(([^,]+)/)?.[1]) > .93);
   const flow = () => trae.locator('.balance-progress-fill').evaluate(el => ({ animation: getComputedStyle(el, '::after').animationName, duration: getComputedStyle(el).transitionDuration }));
