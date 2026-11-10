@@ -23,6 +23,29 @@ h1, h2, h3 { text-wrap: balance; }
 .skip-link:focus { top: 12px; }
 .console-workspace { min-height: 100dvh; }
 .console-workspace .sidebar { width: 228px; padding: 26px 16px 20px; background: #15191a; overflow-y: auto; }
+.console-workspace .sidebar {
+  --sidebar-scroll-thumb: #567168;
+  --sidebar-scroll-hover: #82b39d;
+  --sidebar-scroll-active: #a5ddc5;
+  scrollbar-gutter: stable;
+  overscroll-behavior-y: contain;
+}
+:root.klee-theme .console-workspace .sidebar {
+  --sidebar-scroll-thumb: #df95a8;
+  --sidebar-scroll-hover: #f8d7dd;
+  --sidebar-scroll-active: #fff3ed;
+}
+.console-workspace :is(.sidebar, .sidebar nav, .platform-switcher) { scrollbar-width: thin; scrollbar-color: var(--sidebar-scroll-thumb) transparent; }
+@supports selector(::-webkit-scrollbar) {
+  .console-workspace :is(.sidebar, .sidebar nav, .platform-switcher) { scrollbar-width: auto; scrollbar-color: auto; }
+  .console-workspace :is(.sidebar, .sidebar nav, .platform-switcher)::-webkit-scrollbar { width: 5px; height: 5px; }
+  .console-workspace :is(.sidebar, .sidebar nav, .platform-switcher)::-webkit-scrollbar-track { background: transparent; }
+  .console-workspace :is(.sidebar, .sidebar nav, .platform-switcher)::-webkit-scrollbar-thumb { background: var(--sidebar-scroll-thumb); background-clip: padding-box; border: 1px solid transparent; border-radius: 999px; min-height: 40px; min-width: 32px; }
+  .console-workspace :is(.sidebar, .sidebar nav, .platform-switcher)::-webkit-scrollbar-thumb:hover { background-color: var(--sidebar-scroll-hover); }
+  .console-workspace :is(.sidebar, .sidebar nav, .platform-switcher)::-webkit-scrollbar-thumb:active { background-color: var(--sidebar-scroll-active); }
+  .console-workspace :is(.sidebar, .sidebar nav, .platform-switcher)::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
+  .console-workspace :is(.sidebar, .sidebar nav, .platform-switcher)::-webkit-scrollbar-corner { background: transparent; }
+}
 .console-workspace .brand { gap: 11px; font-size: 21px; margin: 0 10px; letter-spacing: -.7px; }
 .brand small { display: block; font-size: 8px; letter-spacing: 1.8px; font-weight: 500; margin-top: 3px; color: var(--muted); }
 .console-workspace .brand-mark, .home-brand .brand-mark { width: 35px; height: 35px; background: var(--accent); color: #17352a; border-radius: 10px; font-size: 27px; }
@@ -94,3 +117,5 @@ h1, h2, h3 { text-wrap: balance; }
 @media (max-width: 760px) { :root.klee-theme .console-workspace .sidebar nav { flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; max-width: 100%; }:root.klee-theme .console-workspace .sidebar .brand { display: flex; } }
 @media (max-width: 390px) { .console-workspace .page-content { padding: 23px 13px; }.overview-metrics { gap: 9px; }.metric-card { padding: 14px; }.metric-card > small { font-size: 9px; }.metric-card > small svg { display: none; }.theme-header-actions { width: 100%; justify-content: flex-start; }.home-top { flex-wrap: wrap; }.home-gateway-links { gap: 14px; }.home-hero h1 { font-size: 31px; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; } }
+
+.pool-account-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; font-size: 12px; color: var(--muted); margin-top: -3px; }

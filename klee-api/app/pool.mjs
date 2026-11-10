@@ -12,7 +12,7 @@ export function createPool({platform,store,adapter,fresh,clock=Date.now}){
     versions.set(uid,(versions.get(uid)||0)+1);
     if(all)cache.delete(uid);else if(cache.has(uid))cache.get(uid).quotaAt=0;
   }
-  function empty(summary){return {uid:summary.uid,nickname:summary.nickname||summary.uid,region:summary.region||'cn',enabled:summary.enabled!==false,status:'unknown',remaining:null,unlimited:false,unit:unit(summary.region),quotaAt:0,modelsAt:0,models:[],quotaError:null,modelsError:null,inFlight:busy.has(summary.uid)?1:0};}
+  function empty(summary){return {uid:summary.uid,nickname:summary.nickname||summary.uid,region:summary.region||'cn',enabled:summary.enabled!==false,status:'unknown',remaining:null,limit:null,used:null,unlimited:false,unit:unit(summary.region),quotaAt:0,modelsAt:0,models:[],quotaError:null,modelsError:null,inFlight:busy.has(summary.uid)?1:0};}
 
   /** 按账号合并同时到来的目录和额度查询，过期查询失败时不继续投放旧的正余额。 */
   async function metadata(uid,force=false){
@@ -32,9 +32,11 @@ export function createPool({platform,store,adapter,fresh,clock=Date.now}){
         needsQuota?(async()=>{try{
           const quota=await adapter.quota(account);
           row.remaining=typeof quota.remaining==='number'&&Number.isFinite(quota.remaining)?quota.remaining:null;
+          row.limit=Number.isFinite(quota.limit)&&quota.limit>=0?quota.limit:null;
+          row.used=Number.isFinite(quota.used)&&quota.used>=0?quota.used:null;
           row.unlimited=quota.unlimited===true;row.unit=typeof quota.unit==='string'&&quota.unit?quota.unit:unit(row.region);
           row.quotaAt=clock();row.quotaError=row.remaining===null&&!row.unlimited?'平台未能确认通用可用额度':null;
-        }catch(error){row.remaining=null;row.unlimited=false;row.quotaAt=0;row.quotaError=safeError(error,'额度查询失败');}})():null,
+        }catch(error){row.remaining=null;row.limit=null;row.used=null;row.unlimited=false;row.quotaAt=0;row.quotaError=safeError(error,'额度查询失败');}})():null,
         needsModels?(async()=>{try{
           const models=await adapter.models(account);
           if(!Array.isArray(models)||!models.length||models.some(m=>typeof m?.id!=='string'||!m.id.trim()))throw new ApiError('平台未返回有效模型目录',502);

@@ -6,6 +6,7 @@ import { useGuide } from '../modules/guide'
 import type { Model, Platform } from '../types'
 const props = defineProps<{ platform: Platform; models: Model[]; selected: string }>()
 const { model, prompt, stream, maxTokens, open, input, loading, message, bubbles, base, json, curl, send, stop, clear } = useGuide(props)
+defineExpose({ openChat: () => { open.value = true } })
 const log = ref<HTMLElement>()
 watch(bubbles, async () => { await nextTick(); if (log.value) log.value.scrollTop = log.value.scrollHeight }, { deep: true })
 </script>
@@ -14,7 +15,7 @@ watch(bubbles, async () => { await nextTick(); if (log.value) log.value.scrollTo
     <el-alert v-if="platform === 'qoder'" title="Qoder 支持工具、图片与推理参数；temperature 和 top_p 当前不映射到上游。" type="info" :closable="false" />
     <el-alert v-else-if="platform !== 'gateway'" title="请求参数的实际支持范围和行为取决于平台上游与所选模型。" type="info" :closable="false" />
     <el-form label-position="top" class="guide-form"><el-form-item label="模型 ID"><el-select v-model="model" filterable allow-create default-first-option placeholder="输入模型 ID" :disabled="loading"><el-option v-for="m in models" :key="m.id" :label="m.id" :value="m.id" /></el-select></el-form-item><el-form-item label="max_tokens（可选）"><el-input-number v-model="maxTokens" :min="1" :precision="0" :disabled="loading" /></el-form-item><el-form-item label="流式响应"><el-switch v-model="stream" :disabled="loading" /></el-form-item><el-form-item label="示例消息" class="full"><el-input v-model="prompt" type="textarea" :rows="2" /></el-form-item></el-form>
-    <el-tabs><el-tab-pane label="cURL"><div class="code-heading"><span>Bash</span><el-button @click="copy(curl)">复制命令</el-button></div><pre>{{ curl }}</pre></el-tab-pane><el-tab-pane label="请求 JSON"><el-button @click="copy(json)">复制 JSON</el-button><pre>{{ json }}</pre></el-tab-pane></el-tabs><el-button type="primary" @click="open = true">打开测试聊天</el-button>
+    <el-tabs><el-tab-pane label="cURL"><div class="code-heading"><span>Bash</span><el-button @click="copy(curl)">复制命令</el-button></div><pre>{{ curl }}</pre></el-tab-pane><el-tab-pane label="请求 JSON"><el-button @click="copy(json)">复制 JSON</el-button><pre>{{ json }}</pre></el-tab-pane></el-tabs>
   </section>
   <el-dialog v-model="open" title="API 测试聊天" width="min(760px, 94vw)" :close-on-click-modal="false" destroy-on-close><p class="muted">{{ base }} · {{ model || '未选择模型' }} · Key {{ session.keys[platform] ? '已保存（隐藏）' : '未保存' }}</p><div ref="log" class="chat-log" role="log" aria-label="测试对话记录" aria-live="polite"><p v-if="!bubbles.length" class="empty">从一条消息开始测试你的配置。</p><article v-for="(bubble, index) in bubbles" :key="index" class="bubble" :class="{ user: bubble.role === '你' }"><strong>{{ bubble.role }}</strong><div>{{ bubble.content }}</div></article></div><p role="status" class="muted">{{ message }}</p><el-form @submit.prevent="send"><el-form-item label="测试消息"><el-input v-model="input" type="textarea" :rows="3" :readonly="loading" /></el-form-item><div class="actions"><el-button type="primary" native-type="submit" :loading="loading">发送</el-button><el-button :disabled="!loading" @click="stop()">停止</el-button><el-button :disabled="loading" @click="clear()">清空对话</el-button><el-button @click="copy(`Base URL: ${base}\nAPI Key: klee-YOUR_API_KEY\nmodel: ${model}\nstream: ${stream}`)">复制接入配置</el-button></div></el-form></el-dialog>
 </template>

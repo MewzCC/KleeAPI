@@ -408,6 +408,8 @@ export async function createGateway({
             inFlight: a.inFlight === 1 ? 1 : 0,
             status: typeof a.status === "string" ? a.status : "unknown",
             remaining: Number.isFinite(a.remaining) ? a.remaining : null,
+            limit: Number.isFinite(a.limit) && a.limit >= 0 ? a.limit : null,
+            used: Number.isFinite(a.used) && a.used >= 0 ? a.used : null,
             unlimited: a.unlimited === true,
             unit: typeof a.unit === "string" ? a.unit : "",
             quotaAt: a.quotaAt ?? null,

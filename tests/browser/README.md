@@ -13,6 +13,8 @@ npx --yes --package @playwright/cli@0.1.24 playwright-cli run-code --filename=te
 npx --yes --package @playwright/cli@0.1.24 playwright-cli run-code --filename=tests/browser/mock-console.js
 npx --yes --package @playwright/cli@0.1.24 playwright-cli run-code --filename=tests/browser/check-dashboard-checkins.js
 npx --yes --package @playwright/cli@0.1.24 playwright-cli run-code --filename=tests/browser/mock-console.js
+npx --yes --package @playwright/cli@0.1.24 playwright-cli run-code --filename=tests/browser/check-balances.js
+npx --yes --package @playwright/cli@0.1.24 playwright-cli run-code --filename=tests/browser/mock-console.js
 npx --yes --package @playwright/cli@0.1.24 playwright-cli run-code --filename=tests/browser/check-models.js
 npx --yes --package @playwright/cli@0.1.24 playwright-cli close
 ```
