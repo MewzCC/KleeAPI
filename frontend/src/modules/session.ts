@@ -1,5 +1,4 @@
 import { reactive } from 'vue'
-import { kleeTheme } from './decoration'
 import type { Platform } from '../types'
 export const platforms: Platform[] = ['gateway', 'workbuddy', 'trae', 'qoder']
 export const names: Record<Platform, string> = { gateway: '统一网关', workbuddy: 'WorkBuddy', trae: 'Trae', qoder: 'Qoder' }
@@ -7,7 +6,7 @@ export const session = reactive({ ready: false, error: '', platform: 'gateway' a
 export function storedKey(p: Platform) { try { return sessionStorage.getItem(`klee.${p}`) || localStorage.getItem(`klee.${p}`) || '' } catch { return '' } }
 export function remembered(p: Platform) { try { return !!localStorage.getItem(`klee.${p}`) } catch { return false } }
 let pendingFragment: URLSearchParams | undefined
-/** 跨端口仅通过 fragment 携带已保存密钥，进入页面立即移除地址中的凭据。 */
+/** 兼容启动器与旧入口的 fragment 密钥，进入页面立即移除地址中的凭据。 */
 export async function initialize() {
   session.error = ''; session.ready = false
   const incoming = pendingFragment ||= new URLSearchParams(location.hash.slice(1))
@@ -24,7 +23,8 @@ export async function initialize() {
     }
     if (!platforms.includes(config.platform)) throw new Error('本地服务平台配置无效。')
     session.platform = config.platform
-    const current = import.meta.env.DEV ? location.pathname.split('/')[2] as Platform : config.platform
+    const routePlatform = location.pathname.split('/')[2] as Platform
+    const current = platforms.includes(routePlatform) ? routePlatform : config.platform
     for (const p of platforms) {
       const candidate = incoming.get(p)
       if (!candidate) continue
@@ -42,10 +42,8 @@ export async function initialize() {
   } catch (e) { session.error = safe(e) }
 }
 export function baseURL(p: Platform) { return !import.meta.env.DEV && p === session.platform ? location.origin : `${location.protocol}//${location.hostname}:${session.ports[p]}` }
-export function fragment() { const params = new URLSearchParams(); for (const p of platforms) if (session.keys[p]) params.set(p, session.keys[p]); params.set('theme', kleeTheme.value ? 'klee' : 'default'); return '#' + params }
 export function platformLink(p: Platform, tab?: string) {
-  const sameOrigin = import.meta.env.DEV || baseURL(p) === location.origin
-  return (sameOrigin ? '' : baseURL(p)) + '/admin/' + p + (tab ? '?tab=' + encodeURIComponent(tab) : '') + (sameOrigin ? '' : fragment())
+  return '/admin/' + p + (tab ? '?tab=' + encodeURIComponent(tab) : '')
 }
 export function portalLink() { return '/admin' }
 export function saveLocal(p: Platform, key: string, remember: boolean) {

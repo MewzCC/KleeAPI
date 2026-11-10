@@ -10,7 +10,7 @@ import { initializeDecoration } from './modules/decoration'
 import App from './App.vue'
 import PortalView from './views/PortalView.vue'
 import WorkspaceView from './views/WorkspaceView.vue'
-const router = createRouter({ history: createWebHistory(), routes: [
+const router = createRouter({ history: createWebHistory(), scrollBehavior(to, from, saved) { return saved || (to.path !== from.path ? { top: 0 } : false) }, routes: [
   { path: '/admin', component: PortalView },
   { path: '/admin/:platform(gateway|workbuddy|trae|qoder)', component: WorkspaceView },
   { path: '/:pathMatch(.*)*', redirect: '/admin' },

@@ -11,7 +11,7 @@ onMounted(initialize)
 <template>
   <div v-if="session.error" class="boot"><h1>KleeAPI</h1><el-alert :title="session.error" type="error" :closable="false" /><el-button @click="initialize">重新连接</el-button></div>
   <div v-else-if="!session.ready" class="boot" role="status">正在连接本地工作空间…</div>
-  <router-view v-else :key="$route.path" />
+  <router-view v-else v-slot="{ Component, route }"><KeepAlive include="WorkspaceView" :max="4"><component :is="Component" :key="route.path" /></KeepAlive></router-view>
   <ThemeToggle v-if="!session.ready || session.error" class="boot-theme-toggle" />
   <KleeDecorations v-if="kleeTheme" />
   <KleeCompanion v-if="kleeTheme" />

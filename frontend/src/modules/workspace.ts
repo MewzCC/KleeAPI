@@ -1,4 +1,4 @@
-import { computed, onUnmounted, reactive, ref, watch } from 'vue'
+import { computed, onActivated, onDeactivated, onUnmounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
 import { post, request } from '../api/client'
@@ -15,7 +15,7 @@ export function useWorkspace(p: Platform) {
   const accounts = ref<Account[]>([]), catalog = ref<Catalog>(), pool = ref<Snapshot>(), quota = ref<Snapshot>(), checkins = ref<Snapshot>()
   const credential = ref(''), login = ref<Login>(), region = ref('cn'), tab = ref(initialTab), auto = ref(false)
   const errors = reactive<Record<string, string>>({}), busy = reactive<Record<string, boolean>>({}), warning = ref('')
-  let loginTimer: ReturnType<typeof setTimeout> | undefined, active = true
+  let loginTimer: ReturnType<typeof setTimeout> | undefined, active = true, polling = false
   async function load(kind: string, task: () => Promise<void>) {
     if (busy[kind]) return
     busy[kind] = true
@@ -100,15 +100,17 @@ export function useWorkspace(p: Platform) {
   } catch (e) { ElMessage.error(safe(e)) } finally { input.value = '' } }
   function download() { void feedback(async () => { const text = JSON.stringify(JSON.parse(credential.value), null, 2); const url = URL.createObjectURL(new Blob([text], { type: 'application/json' })); const a = document.createElement('a'); a.href = url; a.download = `klee-${p}-account.json`; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000) }) }
   async function poll(current: Login) {
-    if (!active || login.value?.id !== current.id) return
+    if (!active || login.value?.id !== current.id || polling) return
+    polling = true
     try {
       const data = await request<{ status: string; message?: string; credential?: unknown }>(p, '/api/login/' + encodeURIComponent(current.id))
+      if (!active || login.value?.id !== current.id) return
       if (!active || login.value?.id !== current.id) return
       if (data.status === 'pending') { if (current.expiresAt && Date.now() > current.expiresAt) throw new Error('登录已超时，请重新发起。'); loginTimer = setTimeout(() => void poll(current), 2000); return }
       login.value = undefined
       if (data.status === 'ready') { if (data.credential) credential.value = JSON.stringify(data.credential, null, 2); await refreshAccounts(); ElMessage.success('登录成功，账号已导入。') }
       else ElMessage.warning(safe(data.message || '登录未完成。'))
-    } catch (e) { if (active) { login.value = undefined; ElMessage.error(safe(e)) } }
+    } catch (e) { if (active) { login.value = undefined; ElMessage.error(safe(e)) } } finally { polling = false }
   }
   async function startLogin() {
     if (login.value || busy.login) return
@@ -122,8 +124,9 @@ export function useWorkspace(p: Platform) {
   }
   async function cancelLogin() { if (!login.value) return; const current = login.value; await load('login', async () => { await request(p, '/api/login/' + encodeURIComponent(current.id), { method: 'DELETE' }); clearTimeout(loginTimer); login.value = undefined; ElMessage.success('本次登录已取消。') }) }
   function refresh() { if (!session.keys[p]) return; if (p === 'gateway') void refreshPool(); else void refreshAccounts(); if (['overview', 'checkin'].includes(tab.value)) void refreshCheckins() }
-  watch(() => route.query.tab, value => { tab.value = typeof value === 'string' && validTabs.includes(value) ? value : 'overview' })
+  watch(() => [route.params.platform, route.query.tab], ([platform, value]) => { if (platform === p) tab.value = typeof value === 'string' && validTabs.includes(value) ? value : 'overview' })
   watch(tab, value => {
+    if (route.params.platform !== p) return
     if (route.query.tab !== value) void router.replace({ query: { ...route.query, tab: value } })
     if (!session.keys[p]) return
     if (['models', 'guide'].includes(value) && p !== 'gateway' && !catalog.value && !busy.accounts) void refreshModels()
@@ -137,9 +140,12 @@ export function useWorkspace(p: Platform) {
       if (!recent) void refreshCheckins()
     }
   })
-  const timer = setInterval(() => { if (auto.value && !document.hidden && tab.value === 'quota' && session.keys[p]) void refreshQuota() }, 60000)
-  const pageShow = () => { const key = storedKey(p); if (key) session.keys[p] = key; refresh() }
+  const timer = setInterval(() => { if (active && auto.value && !document.hidden && tab.value === 'quota' && session.keys[p]) void refreshQuota() }, 60000)
+  const pageShow = () => { if (!active) return; const key = storedKey(p); if (key) session.keys[p] = key; refresh() }
   window.addEventListener('pageshow', pageShow)
+  let visited = false
+  onActivated(() => { active = true; if (visited) refresh(); visited = true; if (login.value) void poll(login.value) })
+  onDeactivated(() => { active = false; clearTimeout(loginTimer) })
   onUnmounted(() => { active = false; clearInterval(timer); clearTimeout(loginTimer); window.removeEventListener('pageshow', pageShow) })
   refresh()
   return { accounts, catalog, pool, quota, checkins, checkinRows, credential, login, region, tab, auto, errors, busy, warning, refresh, refreshPool, refreshAccounts, refreshModels, refreshQuota, refreshCheckins, claim, action, importCredential, readFile, download, startLogin, cancelLogin }

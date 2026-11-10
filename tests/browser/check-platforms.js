@@ -45,7 +45,7 @@ async (page) => {
   assert(new URL(page.url()).hash === '', 'Current platform link must not leave keys in URL');
   await page.locator('.platform-switcher').getByRole('link', { name: 'Trae', exact: true }).click();
   await page.getByRole('heading', { name: '一切就绪，从这里开始。', exact: true }).waitFor();
-  assert(new URL(page.url()).port === '17864' && !new URL(page.url()).hash, 'Cross-platform handoff must clear keys');
+  assert(new URL(page.url()).port === '17865' && new URL(page.url()).pathname === '/admin/trae' && !new URL(page.url()).hash, 'Platform routing must retain the current origin and keep keys out of the URL');
   await page.getByRole('button', { name: '开启可莉主题', exact: true }).click();
   await page.locator('.platform-switcher').getByRole('link', { name: 'WorkBuddy', exact: true }).click();
   await page.getByRole('button', { name: '可莉主题已开启', exact: true }).waitFor();

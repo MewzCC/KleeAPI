@@ -9,19 +9,14 @@ import ConsoleIcon from '../components/ConsoleIcon.vue'
 import WorkspaceOverview from '../components/WorkspaceOverview.vue'
 import CheckinPanel from '../components/CheckinPanel.vue'
 import BalanceProgress from '../components/BalanceProgress.vue'
+import { sidebarCollapsed, toggleSidebar } from '../modules/sidebar'
 import { baseURL, date, names, number, platformLink, platforms, portalLink, safe, session, statusName } from '../modules/session'
 import { copy, useWorkspace } from '../modules/workspace'
 import type { Account, Platform } from '../types'
 const route = useRoute()
-const p = (import.meta.env.DEV ? route.params.platform : session.platform) as Platform
+const p = route.params.platform as Platform
 const { accounts, catalog, pool, quota, checkins, checkinRows, credential, login, region, tab, auto, errors, busy, warning, refresh, refreshPool, refreshAccounts, refreshModels, refreshQuota, refreshCheckins, claim, action, importCredential, readFile, download, startLogin, cancelLogin } = useWorkspace(p)
 const search = ref(''), selected = ref(''), accountSearch = ref(''), accountState = ref('all'), connecting = ref(false)
-const sidebarCollapsed = ref(false)
-try { sidebarCollapsed.value = localStorage.getItem('klee.sidebar.collapsed') === 'true' } catch { /* 存储受限时使用展开状态。 */ }
-function toggleSidebar() {
-  sidebarCollapsed.value = !sidebarCollapsed.value
-  try { localStorage.setItem('klee.sidebar.collapsed', String(sidebarCollapsed.value)) } catch { /* 存储受限时保留本页状态。 */ }
-}
 const apiGuide = ref<InstanceType<typeof ApiGuide>>()
 const GatewayUsagePanel = defineAsyncComponent(() => import('../components/GatewayUsagePanel.vue'))
 const tabs = computed(() => [{ id: 'overview', label: '工作台' }, ...(p === 'gateway' ? [{ id: 'pool', label: '跨平台号池' }] : [{ id: 'accounts', label: '账号管理' }]), { id: 'checkin', label: '签到中心' }, { id: 'models', label: '模型目录' }, ...(p === 'gateway' ? [{ id: 'usage', label: '调用统计' }] : [{ id: 'quota', label: '额度监控' }]), { id: 'guide', label: 'API 接入' }, { id: 'settings', label: '连接设置' }])
@@ -54,10 +49,10 @@ function addAccount() { tab.value = 'accounts'; connecting.value = true; setTime
   <div class="workspace console-workspace" :class="[p, { 'sidebar-collapsed': sidebarCollapsed }]">
     <a class="skip-link" href="#workspace-content">跳到主要内容</a>
     <aside class="sidebar">
-      <div class="sidebar-heading"><a class="brand" :href="portalLink()" aria-label="KleeAPI 首页"><span class="brand-mark">K</span><span class="sidebar-text">KleeAPI<small>LOCAL CONSOLE</small></span></a><button class="sidebar-toggle" type="button" :aria-label="sidebarCollapsed ? '展开导航栏' : '折叠导航栏'" :title="sidebarCollapsed ? '展开导航栏' : '折叠导航栏'" :aria-expanded="!sidebarCollapsed" aria-controls="sidebar-navigation" @click="toggleSidebar"><ConsoleIcon :name="sidebarCollapsed ? 'expand' : 'collapse'" :size="18" /></button></div>
-      <div class="platform-switcher"><p class="nav-label">切换平台</p><a v-for="platform in platforms" :key="platform" :href="platformLink(platform)" :class="{ current: platform === p }" :aria-label="names[platform]" :title="names[platform]" :aria-current="platform === p ? 'true' : undefined"><span class="platform-dot" :class="platform" /><span class="platform-short" aria-hidden="true">{{ platform === 'gateway' ? 'K' : names[platform].slice(0, 1) }}</span><span class="sidebar-text">{{ names[platform] }}</span><span v-if="platform === p" class="switch-current">当前</span></a></div>
+      <div class="sidebar-heading"><RouterLink class="brand" :to="portalLink()" aria-label="KleeAPI 首页"><span class="brand-mark">K</span><span class="sidebar-text">KleeAPI<small>LOCAL CONSOLE</small></span></RouterLink><button class="sidebar-toggle" type="button" :aria-label="sidebarCollapsed ? '展开导航栏' : '折叠导航栏'" :title="sidebarCollapsed ? '展开导航栏' : '折叠导航栏'" :aria-expanded="!sidebarCollapsed" aria-controls="sidebar-navigation" @click="toggleSidebar"><ConsoleIcon :name="sidebarCollapsed ? 'expand' : 'collapse'" :size="18" /></button></div>
+      <div class="platform-switcher"><p class="nav-label">切换平台</p><RouterLink v-for="platform in platforms" :key="platform" :to="platformLink(platform)" :class="{ current: platform === p }" :aria-label="names[platform]" :title="names[platform]" :aria-current="platform === p ? 'true' : undefined"><span class="platform-dot" :class="platform" /><span class="platform-short" aria-hidden="true">{{ platform === 'gateway' ? 'K' : names[platform].slice(0, 1) }}</span><span class="sidebar-text">{{ names[platform] }}</span><span v-if="platform === p" class="switch-current">当前</span></RouterLink></div>
       <p class="nav-label">{{ names[p] }}</p><nav id="sidebar-navigation" aria-label="工作空间导航"><button v-for="item in tabs" :key="item.id" :class="{ active: tab === item.id }" :aria-label="item.label" :title="item.label" :aria-current="tab === item.id ? 'page' : undefined" @click="tab = item.id"><ConsoleIcon :name="item.id" :size="18" /><span class="sidebar-text">{{ item.label }}</span><span v-if="item.id === 'accounts' && accounts.length" class="nav-count sidebar-text">{{ accounts.length }}</span></button></nav>
-      <div class="sidebar-bottom"><a class="sidebar-home" :href="portalLink()" aria-label="所有平台" title="所有平台"><ConsoleIcon name="back" :size="16" /><span class="sidebar-text">所有平台</span></a><span class="local-label"><i /> 本地工作空间</span><code>{{ baseURL(p) }}</code></div>
+      <div class="sidebar-bottom"><RouterLink class="sidebar-home" :to="portalLink()" aria-label="所有平台" title="所有平台"><ConsoleIcon name="back" :size="16" /><span class="sidebar-text">所有平台</span></RouterLink><span class="local-label"><i /> 本地工作空间</span><code>{{ baseURL(p) }}</code></div>
     </aside>
     <main id="workspace-content" class="workspace-main" tabindex="-1"><header class="workspace-top"><div class="breadcrumbs">{{ names[p] }}<span>/</span><strong>{{ title }}</strong></div><div class="theme-header-actions"><span class="local-label"><i /> 本地运行</span><ThemeToggle /></div></header>
     <div class="page-content"><section class="page-heading"><div><p class="eyebrow">{{ p === 'gateway' ? '你的模型连接中心' : names[p] + ' 工作空间' }}</p><h1>{{ tab === 'overview' ? '一切就绪，从这里开始。' : title }}</h1><p class="muted">{{ descriptions[tab] }}</p></div><div class="actions"><el-button v-if="tab === 'guide'" type="primary" @click="apiGuide?.openChat()">打开测试聊天</el-button><el-button v-if="tab === 'overview'" :loading="busy.accounts || busy.pool || busy.checkins" :disabled="!session.keys[p] || busy.claim" @click="refresh"><ConsoleIcon name="refresh" :size="16" />刷新数据</el-button><el-button v-if="p !== 'gateway' && ['overview', 'accounts'].includes(tab)" type="primary" @click="addAccount"><ConsoleIcon name="add" :size="16" />添加账号</el-button></div></section>
