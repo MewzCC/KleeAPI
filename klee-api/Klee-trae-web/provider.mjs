@@ -1,5 +1,6 @@
 import {randomBytes} from 'node:crypto';
 import {requestJSON, upstreamFetch, ApiError} from '../app/http.mjs';
+import {ugDeviceContext, syncDevice} from './device.mjs';
 
 const AGENT = 'https://trae-api-cn.mchost.guru';
 const OAUTH = 'https://api.trae.com.cn';
@@ -20,7 +21,7 @@ function checked(data, requireCode = false) {
   if (!data || typeof data !== 'object' || Array.isArray(data)) throw new ApiError('Trae 返回了无效数据', 502, 'upstream_error');
   const code = data.code ?? data.Code;
   if ((code != null && Number(code) !== 0) || data.ResponseMetadata?.Error || data.Error) {
-    const messages = {9074:'平台拒绝本次领取，未确认到账；请在官方客户端核对签到与设备状态',9095:'此设备今日已签到，当前账号未确认领取',1001:'登录已失效，请重新登录'};
+    const messages = {9074:'本次签到未获平台批准，奖励未确认到账。请先在 Trae 官方客户端核对今日签到、积分明细及登录设备，再刷新状态',9095:'此设备今日已签到，当前账号未确认领取；请核对官方签到记录',1001:'登录已失效，请在账号管理中重新登录'};
     throw new ApiError(`Trae 拒绝请求（${text(code ?? 'error')}）：${messages[code] || '请在官方客户端核对'}`, code == 1001 ? 401 : 502, `trae_${code ?? 'error'}`);
   }
   if (requireCode && code == null) throw new ApiError('领取响应缺少业务码，请核对官方签到记录', 502, 'upstream_error');
@@ -94,6 +95,8 @@ function accountFields(input) {
     domain:input.domain || 'trae.cn', endpoint:OAUTH,
     enterpriseId:text(input.enterpriseId ?? input.EnterpriseID ?? input.TenantID),
     machineId:text(input.machineId ?? input.machine_id), deviceId:text(input.deviceId ?? input.device_id),
+    deviceBrand:text(input.deviceBrand ?? input.x_device_brand), deviceType:text(input.deviceType ?? input.x_device_type),
+    osVersion:text(input.osVersion ?? input.x_os_version), appVersion:text(input.appVersion ?? input.x_app_version),
     reqSource,
   };
 }
@@ -117,7 +120,13 @@ function headers(account, kind = 'solo', stream = false) {
 }
 
 async function post(host, path, account, body = {}, kind = 'solo') {
-  return checked(await requestJSON(host + path, {method:'POST', headers:headers(account, kind), body}));
+  const h = headers(account, kind);
+  if (kind === 'ug') {
+    const device = await ugDeviceContext(account);
+    for (const [header, field] of [['X-Device-Id','deviceId'],['X-Device-Brand','deviceBrand'],['X-Device-Type','deviceType'],['X-Os-Version','osVersion'],['X-App-Version','appVersion']]) if (device[field]) h[header] = device[field];
+    if (device.appVersion) h['User-Agent'] = `Trae/${device.appVersion}`;
+  }
+  return checked(await requestJSON(host + path, {method:'POST', headers:h, body}));
 }
 
 /**
@@ -222,15 +231,16 @@ async function startLogin({region = 'cn', callbackURL = 'http://127.0.0.1:18080/
   const callback = new URL(callbackURL);
   if (callback.origin !== 'http://127.0.0.1:18080' || callback.pathname !== '/authorize' || callback.search || callback.hash || callback.username || callback.password) throw new ApiError('Trae 登录回调必须使用本机 18080 端口');
   const machineId = randomBytes(16).toString('hex'), deviceId = randomBytes(16).toString('hex');
+  const deviceContext = await ugDeviceContext({reqSource:2, deviceId});
   const state = deviceId.slice(-16);
   const url = new URL('https://www.trae.cn/authorization');
   url.search = new URLSearchParams({
     login_version:'1', auth_from:'solo', login_channel:'native_ide', plugin_version:'2.3.62834',
     auth_type:'local', client_id:CLIENT_ID, redirect:'0', login_trace_id:state, auth_callback_url:callbackURL,
     machine_id:machineId, device_id:deviceId, x_device_id:deviceId, x_machine_id:machineId,
-    x_device_brand:'PC', x_device_type:'PC', x_os_version:'1.0', x_app_version:VERSION, x_app_type:'stable',
+    x_device_brand:deviceContext.deviceBrand || '', x_device_type:deviceContext.deviceType || '', x_os_version:deviceContext.osVersion || '', x_app_version:deviceContext.appVersion || VERSION, x_app_type:'stable',
   }).toString();
-  return {url:url.href, state, machineId, deviceId, callbackURL};
+  return {url:url.href, state, machineId, deviceId, deviceContext, callbackURL};
 }
 
 /**
@@ -253,6 +263,7 @@ async function completeLogin(pending, rawURL) {
   let account = accountFields(readInput(rawURL));
   account.machineId = pending.machineId;
   account.deviceId = pending.deviceId;
+  for (const field of ['deviceBrand','deviceType','osVersion','appVersion']) if (pending.deviceContext?.[field]) account[field] = pending.deviceContext[field];
   if (account.refreshToken) account = await refresh(account);
   if (!account.accessToken) throw new ApiError('登录回调缺少令牌');
   if (!account.uid || !account.nickname) account = await identify(account);
@@ -297,5 +308,5 @@ async function chat(account, body, {signal} = {}) {
   });
 }
 
-export default {normalize, refresh, models, quota, checkin, claim, startLogin,
+export default {normalize, refresh, models, quota, checkin, claim, startLogin, syncDevice,
   pollLogin:async () => ({status:'pending'}), matchesCallback, completeLogin, chat, streamFormat:'solo'};

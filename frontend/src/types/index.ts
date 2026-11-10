@@ -8,9 +8,10 @@ export interface Account {
   models?: string[]; quotaError?: string; modelsError?: string; inFlight?: number;
   checkedIn?: boolean | null; message?: string; reward?: number | string; balanceBefore?: number; balanceAfter?: number;
   startsAt?: number | string; endsAt?: number | string;
+  errorCode?: string; hint?: string;
   checkin?: { enabled?: boolean; checkedIn?: boolean; reward?: number | string; startsAt?: number | string; endsAt?: number | string };
 }
 export interface Model { id: string; name?: string; availableAccounts?: number; canonicalIds?: string[] }
-export interface Snapshot { accounts: Account[]; fetchedAt?: string; unit?: string; warning?: string; platforms?: { platform: Platform; error?: string }[]; models?: Model[] }
+export interface Snapshot { accounts: Account[]; fetchedAt?: string | number; unit?: string; warning?: string; platforms?: { platform: Platform; status?: string; error?: string }[]; models?: Model[] }
 export interface Login { id: string; url: string; expiresAt?: number; status?: string }
 export interface Catalog { data: Model[]; fetchedAt?: string; source?: string }

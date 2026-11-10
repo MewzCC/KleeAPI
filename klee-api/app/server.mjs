@@ -9,12 +9,14 @@ import {AccountStore,atomicWrite} from './store.mjs';
 import {ApiError,json,readBody} from './http.mjs';
 import {relayCompletion} from './stream.mjs';
 import {createPool} from './pool.mjs';
+import {checkinTarget,checkinFailure} from './checkin.mjs';
 import workbuddy from '../Klee-workbuddy-web/provider.mjs';
 import trae from '../Klee-trae-web/provider.mjs';
 import qoder from '../Klee-qoder-web/provider.mjs';
 
 const adapters={workbuddy,trae,qoder};
 const folder={workbuddy:'WorkBuddy',trae:'Trae',qoder:'Qoder'};
+const deviceFields=['deviceId','reqSource','deviceBrand','deviceType','osVersion','appVersion'];
 
 /** 每个平台一份状态与监听器；账号只手动切换，对话不排队、不自动重试或换号。 */
 export async function createService({platform,base=root,adapter=adapters[platform],protectKey,callback=true,poolTimeoutMs=300000}={}){
@@ -35,7 +37,12 @@ export async function createService({platform,base=root,adapter=adapters[platfor
   }
 
   function refreshAccount(account,options){
-    if(!refreshing.has(account.uid))refreshing.set(account.uid,(async()=>{const original=structuredClone(account),changes=await adapter.refresh(account,options);return store.saveRefreshed(original,{...account,...changes});})().finally(()=>refreshing.delete(account.uid)));
+    if(!refreshing.has(account.uid))refreshing.set(account.uid,(async()=>{
+      const original=structuredClone(account),changes=await adapter.refresh(account,options),next={...account,...changes};
+      // 令牌刷新未修改的设备字段交给当前存储，避免覆盖刷新期间刚同步的绑定。
+      for(const key of deviceFields)if(next[key]===original[key])delete next[key];
+      return store.saveRefreshed(original,next);
+    })().finally(()=>refreshing.delete(account.uid)));
     return refreshing.get(account.uid);
   }
 
@@ -125,7 +132,7 @@ export async function createService({platform,base=root,adapter=adapters[platfor
         if(daily?.checkedIn===true){row.status='already';row.message=platform==='qoder'?'本轮已签到':'今日已签到';}
         else if(daily?.enabled===false){row.status='no_activity';row.message='当前没有可领取的签到活动';}
         else if(daily?.enabled===true&&daily?.checkedIn===false){row.status='available';row.message=platform==='qoder'?'本轮未签到':'今日未签到';}
-      }catch(error){row.message=platform==='qoder'&&upstreamUnauthorized(error)?deviceReauth().message:error instanceof ApiError?error.message:'签到状态查询失败，请稍后刷新';}
+      }catch(error){checkinFailure(row,platform==='qoder'&&upstreamUnauthorized(error)?deviceReauth():error instanceof ApiError?error:new Error('签到状态查询失败，请稍后刷新'));}
       return row;
     });
     return {platform,fetchedAt:Date.now(),accounts};
@@ -149,13 +156,13 @@ export async function createService({platform,base=root,adapter=adapters[platfor
         if(after&&(!before.campaignId||after.campaignId===before.campaignId)&&typeof after.checkedIn==='boolean')result.checkedIn=after.checkedIn;
         // 活动跨轮时只能确认原领取窗口，不能把另一活动的状态作为本次成功依据。
         if(after?.checkedIn&&(!before.campaignId||after.campaignId===before.campaignId)){result.status=claimError?'already':'claimed';result.message=claimError?'本轮已签到（复查确认）':'签到状态已确认';}
-        else if(claimError){result.message=claimError.message;}
+        else if(claimError){checkinFailure(result,claimError);}
         else{result.status='pending';result.message='领取请求已提交，签到结果尚未确认，请核对官方记录';}
       }
       try{result.balanceAfter=(await adapter.quota(account)).remaining;if(Number.isFinite(result.balanceAfter))await store.updateCredits(account.uid,result.balanceAfter);}catch{}
       if(result.status==='claimed'&&result.balanceBefore!==null&&result.balanceAfter===result.balanceBefore)result.message+='，当前查询余额未变化，请核对官方积分明细';
       else if(result.status==='claimed'&&result.balanceAfter===null)result.message+='，余额暂未能读取';
-    }catch(error){result.message=platform==='qoder'&&upstreamUnauthorized(error)?deviceReauth().message:error.message||'签到状态查询失败';}
+    }catch(error){checkinFailure(result,platform==='qoder'&&upstreamUnauthorized(error)?deviceReauth():error);}
     pool.invalidate(input.uid,false);return result;
   }
 
@@ -201,10 +208,23 @@ export async function createService({platform,base=root,adapter=adapters[platfor
       if(req.method==='POST'&&path==='/api/key'){const body=await readBody(req,4096);store.replaceKey(body.apiKey,token(req));return json(res,200,{ok:true});}
       if(req.method==='POST'&&path==='/api/accounts/import'){const body=await readBody(req,6*1024*1024);return json(res,200,await importAccount(body.json));}
       if(req.method==='POST'&&path==='/api/accounts/desktop'){if(!adapter.desktop)throw new ApiError('此平台不支持读取桌面登录');return json(res,200,await importAccount(await adapter.desktop()));}
-      const match=path.match(/^\/api\/accounts\/([^/]+)(?:\/(export|refresh))?$/);
+      const match=path.match(/^\/api\/accounts\/([^/]+)(?:\/(export|refresh|device))?$/);
       if(match){
         const uid=decodeURIComponent(match[1]),action=match[2];
         if(req.method==='GET'&&action==='export')return json(res,200,store.get(uid));
+        if(req.method==='POST'&&action==='device'){
+          if(!adapter.syncDevice)throw new ApiError('此平台不支持同步本机设备');
+          if(checking)throw new ApiError('签到正在进行，请等待结果后同步设备',409);
+          checking=true;
+          try{
+          await readBody(req,4096);
+          const old=store.get(uid),binding=await adapter.syncDevice(old);
+          if(typeof binding?.deviceId!=='string'||!binding.deviceId||![1,2].includes(binding.reqSource))throw new ApiError('官方设备信息无效',502);
+          const changes=Object.fromEntries(deviceFields.filter(key=>binding[key]!==undefined).map(key=>[key,binding[key]]));
+          await store.saveRefreshed(old,{...changes,uid});pool.invalidate(uid,false);
+          return json(res,200,{ok:true,account:store.list().find(a=>a.uid===uid)});
+          }finally{checking=false;}
+        }
         if(req.method==='POST'&&action==='refresh'){const old=store.get(uid);if(!old.refreshToken&&!(platform==='qoder'&&old.deviceRefreshToken))throw new ApiError('账号没有刷新令牌，请重新登录');const next=await fresh(old,true);modelCache=null;pool.invalidate(uid);return json(res,200,{account:store.list().find(a=>a.uid===uid),credential:next,...(next.refreshWarning?{warning:next.refreshWarning}:{})});}
         if(req.method==='PATCH'&&!action){await store.patch(uid,await readBody(req,4096));modelCache=null;pool.invalidate(uid);return json(res,200,{ok:true});}
         if(req.method==='DELETE'&&!action){await store.remove(uid);modelCache=null;pool.invalidate(uid);return json(res,200,{ok:true});}
@@ -223,7 +243,7 @@ export async function createService({platform,base=root,adapter=adapters[platfor
       if(req.method==='GET'&&path==='/api/checkin')return json(res,200,await checkinStatus());
       if(req.method==='POST'&&path==='/api/checkin'){
         if(checking)throw new ApiError('签到正在进行，请等待本次结果',409);checking=true;
-        try{const body=await readBody(req,4096),accounts=body.all?store.state.accounts.map(a=>structuredClone(a)):[store.selected()];const results=[];for(const a of accounts)results.push(await checkinOne(a));return json(res,200,{platform,fetchedAt:Date.now(),accounts:results});}finally{checking=false;}
+        try{const body=checkinTarget(await readBody(req,4096)),accounts=body.all?store.state.accounts.map(a=>structuredClone(a)):[body.uid?store.get(body.uid):store.selected()];const results=[];for(const a of accounts)results.push(await checkinOne(a));return json(res,200,{platform,fetchedAt:Date.now(),accounts:results});}finally{checking=false;}
       }
       if(req.method==='POST'&&path==='/api/login'){
         pruneLogins();if(platform==='trae'&&!callbackAvailable)throw new ApiError('登录回调端口 18080 被占用，请先释放该端口或手动导入 JSON',503);

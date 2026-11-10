@@ -15,6 +15,7 @@ const quote = (text: string) => "'" + text.replace(/'/g, "'\"'\"'") + "'"
 const json = computed(() => JSON.stringify(body.value, null, 2))
 const curl = computed(() => `curl ${stream.value ? '-N ' : ''}${quote(base.value + '/chat/completions')} \\\n  -H 'Content-Type: application/json' \\\n  -H 'Authorization: Bearer klee-YOUR_API_KEY' \\\n  --data-raw ${quote(json.value)}`)
 watch(() => props.selected, value => { model.value = value })
+watch(() => props.models, value => { if (!model.value && value.length) model.value = value[0]!.id }, { immediate: true })
 watch(model, () => { if (loading.value) controller?.abort(); history = []; bubbles.value = []; message.value = '模型已切换，已开始新的对话。' })
 watch(open, value => { if (!value) controller?.abort(); else if (!input.value) input.value = prompt.value })
 async function send() {

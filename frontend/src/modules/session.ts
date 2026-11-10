@@ -43,8 +43,11 @@ export async function initialize() {
 }
 export function baseURL(p: Platform) { return !import.meta.env.DEV && p === session.platform ? location.origin : `${location.protocol}//${location.hostname}:${session.ports[p]}` }
 export function fragment() { const params = new URLSearchParams(); for (const p of platforms) if (session.keys[p]) params.set(p, session.keys[p]); params.set('theme', kleeTheme.value ? 'klee' : 'default'); return '#' + params }
-export function platformLink(p: Platform) { return (import.meta.env.DEV ? '' : baseURL(p)) + '/admin/' + p + fragment() }
-export function portalLink() { return '/admin' + fragment() }
+export function platformLink(p: Platform, tab?: string) {
+  const sameOrigin = import.meta.env.DEV || baseURL(p) === location.origin
+  return (sameOrigin ? '' : baseURL(p)) + '/admin/' + p + (tab ? '?tab=' + encodeURIComponent(tab) : '') + (sameOrigin ? '' : fragment())
+}
+export function portalLink() { return '/admin' }
 export function saveLocal(p: Platform, key: string, remember: boolean) {
   session.keys[p] = key
   try { sessionStorage.setItem(`klee.${p}`, key); if (remember) localStorage.setItem(`klee.${p}`, key); else localStorage.removeItem(`klee.${p}`) } catch { /* 浏览器禁止存储时仍保留本页会话。 */ }

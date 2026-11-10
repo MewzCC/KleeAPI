@@ -6,6 +6,8 @@
   "type": "module",
   "engines": { "node": ">=22.12.0" },
   "scripts": {
+    "setup:qoder": "node scripts/setup-qoder-runtime.mjs",
+    "test": "node --experimental-strip-types --test tests/*.test.mjs",
     "setup": "npm --prefix frontend ci",
     "typecheck": "npm --prefix frontend run typecheck",
     "build": "npm --prefix frontend run build",

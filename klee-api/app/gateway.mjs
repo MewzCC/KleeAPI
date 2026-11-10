@@ -9,6 +9,7 @@ import { atomicWrite } from "./store.mjs";
 import { ApiError, json, readBody, upstreamFetch } from "./http.mjs";
 import { mergeCompletionUsage, parseEvents } from "./stream.mjs";
 import { createUsageLog, usageFields } from "./gateway-usage.mjs";
+import { checkinTarget } from "./checkin.mjs";
 
 const platforms = { workbuddy: "WorkBuddy", trae: "Trae", qoder: "Qoder" };
 const keyPattern = /^klee-[\x21-\x7e]{3,251}$/;
@@ -273,6 +274,7 @@ export async function createGateway({
     turns = new Map(),
     cooldowns = new Map();
   let sequence = 0;
+  let checking = false;
   const controllers = new Set();
   const queue = [];
   let draining = false,
@@ -319,6 +321,38 @@ export async function createGateway({
         Authorization: "Bearer " + key,
       },
     });
+  }
+
+  async function checkins(target) {
+    const selected = target?.platform ? [target.platform] : Object.keys(platforms);
+    const results = await Promise.all(selected.map(async platform => {
+      let failure = '平台连接异常，请检查本地服务后刷新状态';
+      const controller = new AbortController();
+      controllers.add(controller);
+      // 聚合先于前端的 120 秒预算结束，确保其他平台已确认的结果可返回。
+      const timer = setTimeout(() => controller.abort(), Math.min(requestTimeoutMs, 110000));
+      try {
+        const response = await call(platform, '/api/checkin', {
+          signal: controller.signal,
+          ...(target ? { method: 'POST', body: JSON.stringify(target.uid ? { uid: target.uid } : { all: true }) } : {}),
+        });
+        if (!response.ok) {
+          await response.body?.cancel();
+          failure = response.status === 409 ? '该平台正在签到，请等待后刷新状态' : '平台服务未能完成请求，请检查服务和登录状态';
+          throw new Error(failure);
+        }
+        const data = await responseJSON(response, controller.signal);
+        if (!Array.isArray(data?.accounts) || data.accounts.some(a => !a || typeof a.uid !== 'string')) throw new Error('平台返回的签到数据无效');
+        const fields = ['uid', 'nickname', 'region', 'enabled', 'status', 'checkedIn', 'message', 'reward', 'balanceBefore', 'balanceAfter', 'startsAt', 'endsAt', 'errorCode', 'hint'];
+        const accounts = data.accounts.map(a => ({
+          ...Object.fromEntries(fields.filter(key => ['string', 'number', 'boolean'].includes(typeof a[key]) || a[key] === null).map(key => [key, a[key]])), platform,
+        }));
+        return { platform, status: 'ready', accounts };
+      } catch (error) {
+        return { platform, status: 'failed', error: controller.signal.aborted ? '平台响应超时；领取结果待确认，请刷新状态后核对' : failure, accounts: [] };
+      } finally { if (target) snapshots.delete(platform); clearTimeout(timer); controllers.delete(controller); }
+    }));
+    return { fetchedAt: Date.now(), accounts: results.flatMap(r => r.accounts), platforms: results.map(({ accounts, ...result }) => result) };
   }
 
   /** 快照按平台独立过期；失败清空旧资格，避免继续使用过期的正余额。 */
@@ -833,6 +867,13 @@ export async function createGateway({
         });
       if (!authorized(token(req)))
         throw new ApiError("Invalid API key", 401, "invalid_api_key");
+      if (req.method === 'GET' && path === '/api/checkin') return json(res, 200, await checkins());
+      if (req.method === 'POST' && path === '/api/checkin') {
+        if (checking) throw new ApiError('签到正在进行，请等待本次结果', 409, 'checkin_in_progress');
+        checking = true;
+        try { const target = checkinTarget(await readBody(req, 4096), true); return json(res, 200, await checkins(target)); }
+        finally { checking = false; }
+      }
       if (req.method === "GET" && path === "/api/gateway/usage")
         return json(res, 200, usageLog.snapshot());
       if (req.method === "POST" && path === "/api/key") {

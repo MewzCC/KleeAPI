@@ -1,14 +1,19 @@
 import { computed, onUnmounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { useRoute, useRouter } from 'vue-router'
 import { post, request } from '../api/client'
 import { safe, session, storedKey } from './session'
 import type { Account, Catalog, Login, Platform, Snapshot } from '../types'
+import { mergeCheckins } from './checkin'
 export async function copy(text: string) { try { await navigator.clipboard.writeText(text); ElMessage.success('已复制。') } catch { ElMessage.error('复制失败，请手动复制。') } }
 export async function feedback(task: () => Promise<unknown>) { try { await task() } catch (e) { if (e !== 'cancel' && e !== 'close') ElMessage.error(safe(e)) } }
 /** 工作空间保存最近一次成功快照，查询失败仅更新错误；签到读取与领取严格分开。 */
 export function useWorkspace(p: Platform) {
+  const route = useRoute(), router = useRouter()
+  const validTabs = p === 'gateway' ? ['overview', 'pool', 'models', 'usage', 'checkin', 'guide', 'settings'] : ['overview', 'accounts', 'models', 'checkin', 'quota', 'guide', 'settings']
+  const initialTab = typeof route.query.tab === 'string' && validTabs.includes(route.query.tab) ? route.query.tab : 'overview'
   const accounts = ref<Account[]>([]), catalog = ref<Catalog>(), pool = ref<Snapshot>(), quota = ref<Snapshot>(), checkins = ref<Snapshot>()
-  const credential = ref(''), login = ref<Login>(), region = ref('cn'), tab = ref(p === 'gateway' ? 'pool' : 'accounts'), auto = ref(false)
+  const credential = ref(''), login = ref<Login>(), region = ref('cn'), tab = ref(initialTab), auto = ref(false)
   const errors = reactive<Record<string, string>>({}), busy = reactive<Record<string, boolean>>({}), warning = ref('')
   let loginTimer: ReturnType<typeof setTimeout> | undefined, active = true
   async function load(kind: string, task: () => Promise<void>) {
@@ -27,6 +32,7 @@ export function useWorkspace(p: Platform) {
     accounts.value = data.accounts.map(a => ({ ...a, active: a.active || a.uid === data.activeUid }))
     if (old !== accounts.value.find(a => a.active)?.uid) catalog.value = undefined
     warning.value = safe(data.warning || '')
+    if (['models', 'guide'].includes(tab.value)) void refreshModels()
     if (p === 'qoder' && (accounts.value.length || tab.value === 'checkin')) void refreshCheckins()
     if (accounts.value.some(a => a.enabled !== false)) void refreshQuota()
   }) }
@@ -35,29 +41,35 @@ export function useWorkspace(p: Platform) {
     const data = await request<Catalog>(p, '/v1/models?refresh=1')
     if (uid === accounts.value.find(a => a.active)?.uid) catalog.value = data
   }) }
-  async function query(kind: 'quota' | 'checkins', claim?: boolean) {
-    if (busy.claim || (claim !== undefined && (busy.checkins || busy.quota))) return
-    await load(claim === undefined ? kind : 'claim', async () => {
-      const data = claim === undefined
+  async function query(kind: 'quota' | 'checkins', target?: boolean | Account, platform?: Platform) {
+    if (busy.claim || (target !== undefined && (busy.checkins || busy.quota))) return
+    await load(target === undefined ? kind : 'claim', async () => {
+      const key = session.keys[p]
+      const body = typeof target === 'object' ? { uid: target.uid, ...(p === 'gateway' ? { platform: target.platform } : {}) } : { all: target, ...(platform ? { platform } : {}) }
+      const data = target === undefined
         ? await request<Snapshot>(p, kind === 'quota' ? '/api/monitor' : '/api/checkin')
-        : await post<Snapshot>(p, '/api/checkin', { all: claim })
+        : await post<Snapshot>(p, '/api/checkin', body)
+      if (key !== session.keys[p]) return
+      if (!Array.isArray(data.accounts)) throw new Error('服务返回的账号数据无效。')
       data.fetchedAt ||= new Date().toISOString()
       if (kind === 'quota') {
         quota.value = data
         accounts.value = accounts.value.map(a => { const row = data.accounts.find(q => q.uid === a.uid); return row && !row.quotaError && Number.isFinite(row.remaining) ? { ...a, credits: row.remaining } : a })
-      } else if (claim === undefined) checkins.value = data
+      } else if (target === undefined) checkins.value = data
       else {
-        const previous = checkins.value?.accounts || []
-        checkins.value = { ...data, accounts: [...previous.filter(a => !data.accounts.some(b => b.uid === a.uid)), ...data.accounts.map(a => ({ ...previous.find(b => b.uid === a.uid), ...a }))] }
+        checkins.value = mergeCheckins(checkins.value, data, body)
+        const failures = data.accounts.filter(a => ['failed', 'pending', 'unknown'].includes(a.status || '')).length + (data.platforms?.filter(x => x.error).length || 0)
+        if (failures) ElMessage.warning('本次有未完成或待确认的签到，请查看下方结果。')
+        else ElMessage.success('签到处理完成，结果已更新。')
       }
       errors[kind] = ''
     })
-    if (claim !== undefined && errors.claim) errors.checkins = errors.claim
+    if (target !== undefined && errors.claim) errors.checkins = errors.claim
   }
   const refreshQuota = () => query('quota'), refreshCheckins = () => query('checkins')
-  const claim = (all: boolean) => query('checkins', all)
-  const checkinRows = computed(() => accounts.value.map(a => {
-    const result = checkins.value?.accounts.find(b => b.uid === a.uid)
+  const claim = async (target: boolean | Account, platform?: Platform) => { await query('checkins', target, platform); if (p !== 'gateway') void refreshQuota() }
+  const checkinRows = computed(() => (p === 'gateway' ? checkins.value?.accounts || [] : accounts.value).map(a => {
+    const result = checkins.value?.accounts.find(b => b.uid === a.uid && b.platform === a.platform)
     const row = { ...a, status: 'unknown', checkedIn: null, ...result }
     if (a.enabled === false) return { ...row, status: 'disabled', checkedIn: null }
     if ((row.endsAt && Date.now() > new Date(row.endsAt).getTime()) || (row.startsAt && Date.now() < new Date(row.startsAt).getTime())) return { ...row, status: 'unknown', checkedIn: null, message: '活动时间已变化，请刷新状态。' }
@@ -68,6 +80,7 @@ export function useWorkspace(p: Platform) {
     if (action === 'delete') { await ElMessageBox.confirm('删除此本地账号及其完整凭据？此操作无法撤销。', '删除账号', { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' }); await request(p, path, { method: 'DELETE' }) }
     else if (action === 'export') { credential.value = JSON.stringify(await request(p, path + '/export'), null, 2); ElMessage.success('完整凭据已填入编辑区。'); return }
     else if (action === 'refresh') { const data = await post<{ credential?: unknown; warning?: string }>(p, path + '/refresh', {}); if (data.credential) credential.value = JSON.stringify(data.credential, null, 2); if (data.warning) ElMessage.warning(safe(data.warning)) }
+    else if (action === 'device') { await post(p, path + '/device', {}); checkins.value = undefined; errors.checkins = ''; errors.claim = '' }
     else await request(p, path, { method: 'PATCH', body: JSON.stringify(action === 'active' ? { active: true } : { enabled: !account.enabled }) })
     await refreshAccounts()
     ElMessage.success('账号已更新。')
@@ -108,11 +121,15 @@ export function useWorkspace(p: Platform) {
     } catch (e) { popup?.close(); throw e } })
   }
   async function cancelLogin() { if (!login.value) return; const current = login.value; await load('login', async () => { await request(p, '/api/login/' + encodeURIComponent(current.id), { method: 'DELETE' }); clearTimeout(loginTimer); login.value = undefined; ElMessage.success('本次登录已取消。') }) }
-  function refresh() { if (!session.keys[p]) return; if (p === 'gateway') void refreshPool(); else void refreshAccounts() }
+  function refresh() { if (!session.keys[p]) return; if (p === 'gateway') void refreshPool(); else void refreshAccounts(); if (['overview', 'checkin'].includes(tab.value)) void refreshCheckins() }
+  watch(() => route.query.tab, value => { tab.value = typeof value === 'string' && validTabs.includes(value) ? value : 'overview' })
   watch(tab, value => {
+    if (route.query.tab !== value) void router.replace({ query: { ...route.query, tab: value } })
     if (!session.keys[p]) return
+    if (['models', 'guide'].includes(value) && p !== 'gateway' && !catalog.value && !busy.accounts) void refreshModels()
+    if (value === 'pool') void refreshPool()
     if (value === 'quota') void refreshQuota()
-    if (value === 'checkin') {
+    if (['overview', 'checkin'].includes(value)) {
       const snapshot = checkins.value
       const recent = p === 'qoder' && snapshot?.fetchedAt && !errors.checkins
         && Date.now() - new Date(snapshot.fetchedAt).getTime() < 30000

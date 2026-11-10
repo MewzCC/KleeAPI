@@ -1,0 +1,36 @@
+async (page) => {
+  await page.goto('http://127.0.0.1:18887/admin/gateway?tab=checkin#theme=default');
+  await page.getByRole('heading', { name: 'Trae 主账号', exact: true }).waitFor();
+  const assert = (condition, message) => { if (!condition) throw new Error(message); };
+  const posts = [];
+  page.on('request', req => { if (req.method() === 'POST' && new URL(req.url()).pathname === '/api/checkin') posts.push(req.postDataJSON()); });
+  const trae = page.locator('.checkin-row').filter({ has: page.getByRole('heading', { name: 'Trae 主账号', exact: true }) });
+  await trae.getByRole('button', { name: '领取奖励' }).click();
+  await trae.getByText('Trae 拒绝请求（9074）', { exact: false }).waitFor();
+  assert((await trae.innerText()).includes('官方客户端'), '9074 must offer actionable guidance');
+  assert(await page.locator('.checkin-row').count() === 6, 'Same UID across platforms must not collapse rows');
+  assert(posts.length === 1 && posts[0].uid === 'shared-user' && posts[0].platform === 'trae', 'Single claim must target Trae and uid');
+  await page.getByRole('button', { name: '全部账号签到', exact: true }).click();
+  await page.locator('.checkin-row').filter({ has: page.getByRole('heading', { name: 'Qoder 国内开发', exact: true }) }).getByText('签到成功', { exact: true }).waitFor();
+  await page.getByRole('button', { name: '已签到', exact: true }).click();
+  await page.locator('.checkin-row').filter({ has: page.getByRole('heading', { name: 'Qoder 国内开发', exact: true }) }).waitFor();
+  assert(await page.locator('.checkin-row').count() === 2, 'Only confirmed WorkBuddy and Qoder count as checked in');
+  await page.getByRole('button', { name: '需核对', exact: true }).click();
+  assert(await page.locator('.checkin-row').count() === 1, 'Rejected Trae must stay in attention');
+  await page.getByRole('button', { name: '全部账号', exact: true }).click();
+  await page.waitForFunction(() => !document.querySelector('.el-message'));
+  await page.screenshot({ path: 'output/playwright/checkin-dark.png', fullPage: true });
+  await page.getByRole('textbox', { name: '搜索签到账号' }).fill('Qoder 国内');
+  await page.waitForFunction(() => document.querySelectorAll('.checkin-row').length === 1);
+  assert(await page.locator('.checkin-row').count() === 1, 'Account search filters rows');
+  await page.getByRole('textbox', { name: '搜索签到账号' }).fill('');
+  await page.getByRole('button', { name: '开启可莉主题', exact: true }).click();
+  await page.screenshot({ path: 'output/playwright/checkin-klee.png', fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: 'output/playwright/checkin-mobile-klee.png', fullPage: true });
+  assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'Mobile Klee checkin has horizontal overflow');
+  await page.getByRole('button', { name: '可莉主题已开启', exact: true }).click();
+  await page.screenshot({ path: 'output/playwright/checkin-mobile-dark.png', fullPage: true });
+  assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'Mobile default checkin has horizontal overflow');
+  return 'PASS: gateway targeted/bulk claims, same UID isolation, truthful rejection, search/status filters, Klee toggle, mobile overflow; POST count=' + posts.length;
+}

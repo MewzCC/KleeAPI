@@ -1,8 +1,6 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { readdir, stat } from "node:fs/promises";
-import { homedir } from "node:os";
-import { join, isAbsolute } from "node:path";
 import { execFile } from "node:child_process";
+import { findRuntimeInfo } from "./runtime-info.mjs";
 import { requestJSON, upstreamFetch, ApiError } from "../app/http.mjs";
 import { encodeBody, cosyHeaders, chatBody, openaiResponse } from "./codec.mjs";
 
@@ -449,69 +447,13 @@ async function quota(account) {
 
 /** 查找官方已安装的原生身份程序，不下载、不生成或重置设备身份。 */
 async function nativeIdentity(account, { required = false } = {}) {
-  const cfg = site(account.region),
-    name = process.platform === "win32" ? "runtime-info.exe" : "runtime-info";
-  const paths = [],
-    override = process.env[cfg.prefix + "RUNTIME_INFO"];
-  if (override) {
-    if (!isAbsolute(override))
-      throw new ApiError(
-        `${cfg.prefix}RUNTIME_INFO 必须是官方 runtime-info 的绝对路径`,
-      );
-    paths.push(override);
-  }
-  if (!override) {
-    if (process.platform === "win32")
-      for (const base of [
-        join(
-          process.env.LOCALAPPDATA || join(homedir(), "AppData", "Local"),
-          "Programs",
-        ),
-        process.env.ProgramFiles,
-        process.env.ProgramW6432,
-      ].filter(Boolean))
-        paths.push(join(base, cfg.app, "resources", "umid", name));
-    else if (process.platform === "darwin")
-      for (const base of ["/Applications", join(homedir(), "Applications")])
-        paths.push(
-          join(base, cfg.app + ".app", "Contents", "Resources", "umid", name),
-        );
-    else paths.push(join("/opt", cfg.linux, "resources", "umid", name));
-  }
-  const config =
-    process.env[cfg.prefix + "CONFIG_DIR"] ||
-    join(
-      process.env[cfg.prefix + "CLI_HOME"] || homedir(),
-      process.env[cfg.prefix + "CONFIG_DIR_NAME"] || cfg.dir,
-    );
-  const cache = join(config, ".bin");
-  for (const d of override
-    ? []
-    : await readdir(cache, { withFileTypes: true }).catch(() => [])) {
-    if (
-      process.platform === "win32" &&
-      d.isDirectory() &&
-      d.name.startsWith(`umid-win32-${process.arch}-`)
-    )
-      paths.push(join(cache, d.name, name));
-    else if (
-      process.platform !== "win32" &&
-      d.isFile() &&
-      d.name.startsWith(`runtime-info-${process.platform}-${process.arch}-`) &&
-      !d.name.endsWith(".tmp")
-    )
-      paths.push(join(cache, d.name));
-  }
-  let file;
-  for (const path of paths)
-    if ((await stat(path).catch(() => null))?.isFile()) {
-      file = path;
-      break;
-    }
+  const cfg = site(account.region), file = await findRuntimeInfo(cfg);
   if (!file) {
     if (!required) return {};
     throw new ApiError(
-      `未找到 ${cfg.app} 原生设备身份程序；请安装并登录 ${cfg.app} 桌面端或 CLI，或设置 ${cfg.prefix}RUNTIME_INFO 指向其官方 runtime-info 程序`,
+      `缺少 ${cfg.app} 官方身份组件；请在项目目录运行 npm run setup:qoder 后重试，或安装官方客户端`,
+      503,
+      "qoder_runtime_missing",
     );
   }
   const output = await new Promise((resolve, reject) => {
