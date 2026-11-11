@@ -83,13 +83,17 @@ export async function createService({platform,base=root,adapter=adapters[platfor
     }catch(error){if(modelCache?.uid===account.uid)return {...modelCache,source:'cache',fetchedAt:modelCache.updated_at,warning:'平台目录未能刷新，显示此账号的上次结果'};throw error;}
   }
 
-  async function mapAccountReads(read){
-    const summaries=store.list();
-    if(platform==='qoder')return Promise.all(summaries.map(read));
-    const rows=[];
-    for(const summary of summaries)rows.push(await read(summary));
+  /** 每个平台最多并发处理三个账号；保留结果顺序，所有任务结束前不释放批次锁。 */
+  async function mapAccounts(accounts,read){
+    const rows=new Array(accounts.length);let next=0;
+    const workers=await Promise.allSettled(Array.from({length:Math.min(3,accounts.length)},async()=>{
+      while(next<accounts.length){const index=next++;rows[index]=await read(accounts[index]);}
+    }));
+    const failed=workers.find(worker=>worker.status==='rejected');
+    if(failed)throw failed.reason;
     return rows;
   }
+  const mapAccountReads=read=>mapAccounts(store.list(),read);
 
   const checkinReads=new Map();
   /** Qoder 只共享同一凭据正在执行的查询，领取前后的复查始终直接请求上游。 */
@@ -243,7 +247,7 @@ export async function createService({platform,base=root,adapter=adapters[platfor
       if(req.method==='GET'&&path==='/api/checkin')return json(res,200,await checkinStatus());
       if(req.method==='POST'&&path==='/api/checkin'){
         if(checking)throw new ApiError('签到正在进行，请等待本次结果',409);checking=true;
-        try{const body=checkinTarget(await readBody(req,4096)),accounts=body.all?store.state.accounts.map(a=>structuredClone(a)):[body.uid?store.get(body.uid):store.selected()];const results=[];for(const a of accounts)results.push(await checkinOne(a));return json(res,200,{platform,fetchedAt:Date.now(),accounts:results});}finally{checking=false;}
+        try{const body=checkinTarget(await readBody(req,4096)),accounts=body.all?store.state.accounts.map(a=>structuredClone(a)):[body.uid?store.get(body.uid):store.selected()];const results=await mapAccounts(accounts,checkinOne);return json(res,200,{platform,fetchedAt:Date.now(),accounts:results});}finally{checking=false;}
       }
       if(req.method==='POST'&&path==='/api/login'){
         pruneLogins();if(platform==='trae'&&!callbackAvailable)throw new ApiError('登录回调端口 18080 被占用，请先释放该端口或手动导入 JSON',503);

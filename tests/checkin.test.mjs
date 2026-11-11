@@ -108,6 +108,62 @@ test('gateway returns successful platforms within the shared request deadline', 
   assert.match(result.data.platforms.find(p => p.platform === 'trae').error, /超时/);
 });
 
+for (const platform of ['workbuddy', 'trae', 'qoder']) test(`${platform} runs bounded concurrent account checkins and status reads`, { timeout: 5000 }, async t => {
+  const base = await mkdtemp(join(tmpdir(), 'klee-concurrent-checkin-'));
+  const ids = ['slow', 'fast', 'failed', 'queued', 'already', 'disabled', 'no-activity'];
+  let release, started, pending, active = 0, peak = 0, readMode = false;
+  let gate = new Promise(resolve => { release = resolve; });
+  let arrived = new Promise(resolve => { started = resolve; });
+  const claimed = new Set(), calls = [];
+  const enter = async () => { active++; peak = Math.max(peak, active); if (active === 3) started(); await gate; active--; };
+  const adapter = {
+    normalize: async account => account,
+    checkin: async account => {
+      if (readMode) await enter();
+      return { enabled: account.uid !== 'no-activity', checkedIn: account.uid === 'already' || claimed.has(account.uid) };
+    },
+    quota: async account => ({ remaining: claimed.has(account.uid) ? 110 : 100 }),
+    claim: async account => { calls.push(account.uid); await enter(); if (account.uid === 'failed') throw new ApiError('模拟平台拒绝', 502); claimed.add(account.uid); },
+  };
+  const service = await createService({ platform, base, adapter, protectKey: false, callback: false });
+  t.after(async () => { release(); await pending; await service.close(); await rm(base, { recursive: true, force: true }); });
+  for (const uid of ids) await service.store.save({ uid, accessToken: 'fake', enabled: uid !== 'disabled' }, uid === 'slow');
+  await new Promise(resolve => service.server.listen(0, '127.0.0.1', resolve));
+  const host = '127.0.0.1:' + ({ workbuddy: 18791, trae: 17864, qoder: 17865 })[platform];
+  const request = body => localRequest(service.server, body, service.store.apiKey, host);
+  const waitForThree = async () => {
+    let timeout;
+    try { await Promise.race([arrived, new Promise((_, reject) => { timeout = setTimeout(() => reject(Error('Three accounts must start before the slow account is released')), 500); })]); }
+    finally { clearTimeout(timeout); }
+  };
+  pending = request({ all: true });
+  await waitForThree();
+  assert.equal(peak, 3);
+  assert.equal((await request({ all: true })).status, 409, 'reject repeated batch submissions while workers are running');
+  assert.equal((await request({ uid: 'slow' })).status, 409, 'reject a duplicate single claim during the batch');
+  release();
+  const result = await pending;
+  assert.equal(result.status, 200);
+  assert.deepEqual(result.data.accounts.map(account => account.uid), ids, 'preserve account order despite concurrent completion');
+  assert.deepEqual(result.data.accounts.map(account => account.status), ['claimed', 'claimed', 'failed', 'claimed', 'already', 'skipped', 'no_activity']);
+  assert.equal(peak, 3, 'never exceed the per-platform concurrency limit');
+  assert.deepEqual([...calls].sort(), ['slow', 'fast', 'failed', 'queued'].sort(), 'each eligible account is claimed once');
+  assert.equal(service.store.state.activeUid, 'slow');
+  for (const uid of ['slow', 'fast', 'queued']) assert.equal(service.store.get(uid).credits, 110, 'concurrent credit writes must all persist');
+
+  readMode = true; active = 0; peak = 0;
+  gate = new Promise(resolve => { release = resolve; });
+  arrived = new Promise(resolve => { started = resolve; });
+  pending = request();
+  await waitForThree();
+  release();
+  const status = await pending;
+  assert.equal(status.status, 200);
+  assert.equal(peak, 3, 'status reads use the same bounded parallelism');
+  assert.deepEqual(status.data.accounts.map(account => account.uid), ids);
+  assert.equal(calls.length, 4, 'status reads must never claim rewards');
+});
+
 test('Trae adapter retains device identity and rejects business code 9074', async t => {
   t.mock.method(globalThis, 'fetch', async (_url, init) => {
     assert.equal(init.headers['X-Device-Id'], 'existing-device');
