@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, nextTick, onDeactivated, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import zhCn from 'element-plus/es/locale/lang/zh-cn'
 import KeyPanel from '../components/KeyPanel.vue'
@@ -7,11 +7,13 @@ import ApiGuide from '../components/ApiGuide.vue'
 import ThemeToggle from '../components/ThemeToggle.vue'
 import ConsoleIcon from '../components/ConsoleIcon.vue'
 import WorkspaceOverview from '../components/WorkspaceOverview.vue'
+import OnboardingProgress from '../components/OnboardingProgress.vue'
 import CheckinPanel from '../components/CheckinPanel.vue'
 import BalanceProgress from '../components/BalanceProgress.vue'
 import { sidebarCollapsed, toggleSidebar } from '../modules/sidebar'
 import { baseURL, date, names, number, platformLink, platforms, portalLink, safe, session, statusName } from '../modules/session'
 import { copy, useWorkspace } from '../modules/workspace'
+import { getOnboarding, modelConnection, type OnboardingAction } from '../modules/onboarding'
 import type { Account, Platform } from '../types'
 const route = useRoute()
 const p = route.params.platform as Platform
@@ -22,6 +24,41 @@ const GatewayUsagePanel = defineAsyncComponent(() => import('../components/Gatew
 const tabs = computed(() => [{ id: 'overview', label: '工作台' }, ...(p === 'gateway' ? [{ id: 'pool', label: '跨平台号池' }] : [{ id: 'accounts', label: '账号管理' }]), { id: 'checkin', label: '签到中心' }, { id: 'models', label: '模型目录' }, ...(p === 'gateway' ? [{ id: 'usage', label: '调用统计' }] : [{ id: 'quota', label: '额度监控' }]), { id: 'guide', label: 'API 接入' }, { id: 'settings', label: '连接设置' }])
 const filteredAccounts = computed(() => accounts.value.filter(a => `${a.nickname || ''} ${a.email || ''} ${a.uid} ${a.region || ''}`.toLowerCase().includes(accountSearch.value.toLowerCase()) && (accountState.value === 'all' || accountState.value === 'enabled' && a.enabled !== false || accountState.value === 'attention' && (a.status !== 'ready' || a.enabled === false))))
 const models = computed(() => p === 'gateway' ? pool.value?.models || [] : catalog.value?.data || [])
+const confirmedModel = ref(''), tested = ref(false), clientConfirmed = ref(false), testRevision = ref(0)
+const progressAccounts = computed(() => p === 'gateway' ? pool.value?.accounts || [] : accounts.value)
+const accountError = computed(() => p === 'gateway' ? errors.pool : errors.accounts)
+const modelError = computed(() => p === 'gateway' ? errors.pool : errors.models)
+const connection = computed(() => modelConnection(p, progressAccounts.value, models.value.find(model => model.id === confirmedModel.value)))
+const onboarding = computed(() => getOnboarding({
+  platform: p, keyPresent: !!session.keys[p], accounts: progressAccounts.value, models: models.value, selected: confirmedModel.value,
+  tested: tested.value, clientConfirmed: clientConfirmed.value, accountError: accountError.value, modelError: modelError.value,
+  loadingAccounts: busy.pool || busy.accounts, loadingModels: busy.pool || busy.models,
+}))
+function resetTest() { tested.value = false; clientConfirmed.value = false; testRevision.value++ }
+watch([confirmedModel, connection, accountError, modelError, () => session.keys[p], () => baseURL(p)], resetTest, { flush: 'sync' })
+onDeactivated(() => apiGuide.value?.closeChat())
+
+function handleTest(model: string, revision: number, success: boolean) {
+  if (revision !== testRevision.value || model !== confirmedModel.value || !onboarding.value.steps[1]?.done) return
+  tested.value = success
+  if (!success) clientConfirmed.value = false
+}
+function changeGuideModel(id: string) {
+  selected.value = id
+  if (id !== confirmedModel.value) confirmedModel.value = ''
+}
+async function navigateOnboarding(action: OnboardingAction) {
+  if (action === 'refresh') { refresh(); return }
+  if (action === 'accounts') { tab.value = 'accounts'; return }
+  if (action === 'test' || action === 'client') {
+    tab.value = 'guide'
+    await nextTick()
+    if (action === 'test') apiGuide.value?.openChat()
+    else apiGuide.value?.focusClient()
+    return
+  }
+  tab.value = action
+}
 const filtered = computed(() => models.value.filter(m => `${m.id} ${m.name || ''} ${(m.canonicalIds || []).join(' ')}`.toLowerCase().includes(search.value.toLowerCase())))
 const modelPage = ref(1), modelPageSize = ref(10)
 const pagedModels = computed(() => filtered.value.slice((modelPage.value - 1) * modelPageSize.value, modelPage.value * modelPageSize.value))
@@ -42,7 +79,7 @@ const quotaTotals = computed(() => {
   return Array.from(groups, ([unit, group]) => ({ unit, ...group }))
 })
 const quotaText = (a: Account) => a.unlimited ? '不限额度' : number(a.remaining) + ' ' + (a.unit || quota.value?.unit || '')
-function selectModel(id: string) { selected.value = id; tab.value = 'guide'; void copy(id) }
+function selectModel(id: string) { confirmedModel.value = id; selected.value = id; tab.value = 'guide'; void copy(id) }
 function addAccount() { tab.value = 'accounts'; connecting.value = true; setTimeout(() => document.getElementById('connect-account')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 0) }
 </script>
 <template>
@@ -57,6 +94,7 @@ function addAccount() { tab.value = 'accounts'; connecting.value = true; setTime
     <main id="workspace-content" class="workspace-main" tabindex="-1"><header class="workspace-top"><div class="breadcrumbs">{{ names[p] }}<span>/</span><strong>{{ title }}</strong></div><div class="theme-header-actions"><span class="local-label"><i /> 本地运行</span><ThemeToggle /></div></header>
     <div class="page-content"><section class="page-heading"><div><p class="eyebrow">{{ p === 'gateway' ? '你的模型连接中心' : names[p] + ' 工作空间' }}</p><h1>{{ tab === 'overview' ? '一切就绪，从这里开始。' : title }}</h1><p class="muted">{{ descriptions[tab] }}</p></div><div class="actions"><el-button v-if="tab === 'guide'" type="primary" @click="apiGuide?.openChat()">打开测试聊天</el-button><el-button v-if="tab === 'overview'" :loading="busy.accounts || busy.pool || busy.checkins" :disabled="!session.keys[p] || busy.claim" @click="refresh"><ConsoleIcon name="refresh" :size="16" />刷新数据</el-button><el-button v-if="p !== 'gateway' && ['overview', 'accounts'].includes(tab)" type="primary" @click="addAccount"><ConsoleIcon name="add" :size="16" />添加账号</el-button></div></section>
     <div v-if="!session.keys[p] && tab !== 'settings'" class="connection-notice"><ConsoleIcon name="key" /><div><strong>先连接 {{ names[p] }}</strong><p>保存此服务的 API Key，即可读取账号、签到与额度。</p></div><el-button @click="tab = 'settings'">配置连接 →</el-button></div>
+    <OnboardingProgress v-if="tab === 'overview'" :platform="p" :progress="onboarding" @navigate="navigateOnboarding" />
     <WorkspaceOverview v-if="tab === 'overview'" :platform="p" :accounts="accounts" :pool="pool" :checkins="checkins" :checkin-loading="!!(busy.checkins || busy.claim)" :checkin-error="errors.checkins" :catalog="catalog" :connected="!!session.keys[p]" :loading="!!(busy.accounts || busy.pool)" :error="errors.pool || errors.accounts" @navigate="tab = $event" @connect="addAccount" @saved="refresh" />
     <template v-if="tab === 'settings'"><KeyPanel :platform="p" @saved="refresh" /><section class="panel"><div class="section-heading"><h2>本地连接信息</h2><el-tag effect="plain">仅监听本机</el-tag></div><div class="settings-row"><span>服务地址</span><code>{{ baseURL(p) }}</code><el-button text @click="copy(baseURL(p))">复制</el-button></div><div class="settings-row"><span>API Base URL</span><code>{{ baseURL(p) }}/v1</code><el-button text @click="copy(baseURL(p) + '/v1')">复制</el-button></div><div class="settings-row"><span>界面外观</span><ThemeToggle /></div></section></template>
     <GatewayUsagePanel v-if="p === 'gateway' && tab === 'usage'" />
@@ -87,7 +125,9 @@ function addAccount() { tab.value = 'accounts'; connecting.value = true; setTime
     <CheckinPanel v-if="tab === 'checkin'" :platform="p" :rows="checkinRows" :snapshot="checkins" :busy="!!busy.claim" :loading="!!busy.checkins" :blocked="!!busy.quota" :connected="!!session.keys[p]" :error="errors.checkins" @refresh="refreshCheckins" @claim="claim" />
 
     <section v-if="tab === 'quota'" class="panel"><div class="section-heading"><div><h2>额度监控</h2><p class="muted">{{ quota ? '更新于 ' + date(quota.fetchedAt) : '尚无成功刷新的数据。' }}</p></div><div class="actions"><el-checkbox v-model="auto">每 60 秒刷新</el-checkbox><el-button :loading="busy.quota" :disabled="busy.claim" @click="refreshQuota">刷新额度</el-button></div></div><el-alert v-if="errors.quota" :title="errors.quota + ' 显示上次数据，额度可能已变化。'" type="error" :closable="false" /><p class="muted">未知额度不会记作零；不同区域、单位的额度分别展示。</p><div class="quota-totals"><article v-for="group in quotaTotals" :key="group.unit"><strong>{{ group.known ? number(group.sum) : '未知' }}</strong><span>{{ group.unit }}</span><p class="muted">{{ group.known }}/{{ group.count }} 个账号有余额数据<span v-if="group.known &lt; group.count"> · 合计不含未知余额</span></p></article></div><div class="result-grid"><article v-for="a in quota?.accounts || []" :key="a.uid" class="result-card"><div class="section-heading"><h3>{{ a.nickname || a.uid }}</h3><el-tag :type="a.enabled === false ? 'info' : a.status === 'ready' ? 'success' : 'warning'">{{ a.enabled === false ? '已停用' : statusName(a.status) }}</el-tag></div><p class="muted">{{ a.region || '未知区域' }} · {{ a.uid }}<br>{{ a.plan || '套餐未知' }}</p><strong class="quota-value">{{ quotaText(a) }}</strong><p class="muted">已用 {{ number(a.used) }} · 总量 {{ number(a.limit) }}</p><p v-if="a.quotaError" class="error-text">{{ safe(a.quotaError) }}</p><p class="muted">凭据到期 {{ date(a.expiresAt) }}</p><el-progress v-if="typeof a.remaining === 'number' && typeof a.limit === 'number' && a.limit > 0" :percentage="Math.max(0, Math.min(100, Math.round(a.remaining / a.limit * 100)))" :stroke-width="5" /><p v-if="a.checkin" class="muted">签到：{{ a.checkin.enabled === false ? '无签到活动' : a.checkin.checkedIn === true ? (p === 'qoder' ? '本轮已签' : '今日已签') : a.checkin.checkedIn === false ? (p === 'qoder' ? '本轮未签' : '今日未签') : '状态未知' }}<span v-if="a.checkin.reward != null"> · 奖励 {{ a.checkin.reward }}</span></p><p v-if="a.checkin?.startsAt || a.checkin?.endsAt" class="muted">{{ date(a.checkin.startsAt) }} → {{ date(a.checkin.endsAt) }}</p><p v-if="a.checkinError" class="error-text">签到：{{ safe(a.checkinError) }}</p><details v-if="a.packages?.length" class="quota-packages"><summary>额度包明细（{{ a.packages.length }}）</summary><div v-for="(pack, index) in a.packages" :key="index"><h3>{{ pack.name || pack.type || '额度包' }}</h3><p class="muted">剩余 {{ number(pack.remaining) }} / {{ number(pack.limit) }} {{ pack.unit || a.unit }}<br>已用 {{ number(pack.used) }}<span v-if="pack.expiresAt"><br>到期 {{ date(pack.expiresAt) }}</span></p></div></details></article></div><el-empty v-if="!quota?.accounts.length" description="暂无额度快照。请连接账号后刷新。" /></section>
-    <ApiGuide v-if="tab === 'guide'" ref="apiGuide" :platform="p" :models="models" :selected="selected" />
+    <ApiGuide v-if="tab === 'guide'" ref="apiGuide" :platform="p" :models="models" :selected="selected"
+      :test-revision="testRevision" :can-confirm="!!onboarding.steps[2]?.done" :client-confirmed="clientConfirmed"
+      @test-result="handleTest" @model-changed="changeGuideModel" @confirm-client="clientConfirmed = $event" />
     <footer class="workspace-footer">{{ names[p] }} · {{ baseURL(p) }} <span>本地管理，由你掌控</span></footer></div></main>
   </div>
 </template>

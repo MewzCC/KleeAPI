@@ -16,31 +16,50 @@ export function useWorkspace(p: Platform) {
   const credential = ref(''), login = ref<Login>(), region = ref('cn'), tab = ref(initialTab), auto = ref(false)
   const errors = reactive<Record<string, string>>({}), busy = reactive<Record<string, boolean>>({}), warning = ref('')
   let loginTimer: ReturnType<typeof setTimeout> | undefined, active = true, polling = false
+  let connectionVersion = 0
   async function load(kind: string, task: () => Promise<void>) {
     if (busy[kind]) return
+    const version = connectionVersion
     busy[kind] = true
-    try { await task(); errors[kind] = '' } catch (e) { if (e !== 'cancel' && e !== 'close') { errors[kind] = safe(e); ElMessage.error(errors[kind]) } } finally { busy[kind] = false }
+    try { await task(); if (version === connectionVersion) errors[kind] = '' }
+    catch (e) { if (version === connectionVersion && e !== 'cancel' && e !== 'close') { errors[kind] = safe(e); ElMessage.error(errors[kind]) } }
+    finally { busy[kind] = false }
   }
-  async function refreshPool(force = false) { await load('pool', async () => {
-    const data = await request<Snapshot>(p, '/api/gateway/status' + (force ? '?refresh=1' : ''))
-    if (!Array.isArray(data.accounts) || !Array.isArray(data.models) || !Array.isArray(data.platforms)) throw new Error('网关快照格式无效。')
-    pool.value = data
-  }) }
-  async function refreshAccounts() { await load('accounts', async () => {
-    const data = await request<{ accounts: Account[]; activeUid?: string; warning?: string }>(p, '/api/accounts')
-    const old = accounts.value.find(a => a.active)?.uid
-    accounts.value = data.accounts.map(a => ({ ...a, active: a.active || a.uid === data.activeUid }))
-    if (old !== accounts.value.find(a => a.active)?.uid) catalog.value = undefined
-    warning.value = safe(data.warning || '')
-    if (['models', 'guide'].includes(tab.value)) void refreshModels()
-    if (p === 'qoder' && (accounts.value.length || tab.value === 'checkin')) void refreshCheckins()
-    if (accounts.value.some(a => a.enabled !== false)) void refreshQuota()
-  }) }
-  async function refreshModels() { await load('models', async () => {
+  async function refreshPool(force = false) {
+    const version = connectionVersion
+    await load('pool', async () => {
+      const data = await request<Snapshot>(p, '/api/gateway/status' + (force ? '?refresh=1' : ''))
+      if (version !== connectionVersion) return
+      if (!Array.isArray(data.accounts) || !Array.isArray(data.models) || !Array.isArray(data.platforms)) throw new Error('网关快照格式无效。')
+      pool.value = data
+    })
+    if (version !== connectionVersion && active && session.keys[p]) void refreshPool()
+  }
+  async function refreshAccounts() {
+    const version = connectionVersion
+    await load('accounts', async () => {
+      const data = await request<{ accounts: Account[]; activeUid?: string; warning?: string }>(p, '/api/accounts')
+      if (version !== connectionVersion) return
+      const old = accounts.value.find(a => a.active)?.uid
+      accounts.value = data.accounts.map(a => ({ ...a, active: a.active || a.uid === data.activeUid }))
+      if (old !== accounts.value.find(a => a.active)?.uid) catalog.value = undefined
+      warning.value = safe(data.warning || '')
+      if (['models', 'guide'].includes(tab.value)) void refreshModels()
+      if (p === 'qoder' && (accounts.value.length || tab.value === 'checkin')) void refreshCheckins()
+      if (accounts.value.some(a => a.enabled !== false)) void refreshQuota()
+    })
+    if (version !== connectionVersion && active && session.keys[p]) void refreshAccounts()
+  }
+  async function refreshModels() {
+    const version = connectionVersion
     const uid = accounts.value.find(a => a.active)?.uid
-    const data = await request<Catalog>(p, '/v1/models?refresh=1')
-    if (uid === accounts.value.find(a => a.active)?.uid) catalog.value = data
-  }) }
+    await load('models', async () => {
+      const data = await request<Catalog>(p, '/v1/models?refresh=1')
+      if (version === connectionVersion && uid === accounts.value.find(a => a.active)?.uid) catalog.value = data
+    })
+    const contextChanged = version !== connectionVersion || uid !== accounts.value.find(a => a.active)?.uid
+    if (contextChanged && active && session.keys[p] && ['models', 'guide'].includes(tab.value)) void refreshModels()
+  }
   async function query(kind: 'quota' | 'checkins', target?: boolean | Account, platform?: Platform) {
     if (busy.claim || (target !== undefined && (busy.checkins || busy.quota))) return
     await load(target === undefined ? kind : 'claim', async () => {
@@ -124,6 +143,14 @@ export function useWorkspace(p: Platform) {
   }
   async function cancelLogin() { if (!login.value) return; const current = login.value; await load('login', async () => { await request(p, '/api/login/' + encodeURIComponent(current.id), { method: 'DELETE' }); clearTimeout(loginTimer); login.value = undefined; ElMessage.success('本次登录已取消。') }) }
   function refresh() { if (!session.keys[p]) return; if (p === 'gateway') void refreshPool(); else void refreshAccounts(); if (['overview', 'checkin'].includes(tab.value)) void refreshCheckins() }
+  watch(() => session.keys[p], () => {
+    connectionVersion++
+    pool.value = undefined
+    accounts.value = []
+    catalog.value = undefined
+    for (const kind of ['pool', 'accounts', 'models']) errors[kind] = ''
+    if (active) refresh()
+  }, { flush: 'sync' })
   watch(() => [route.params.platform, route.query.tab], ([platform, value]) => { if (platform === p) tab.value = typeof value === 'string' && validTabs.includes(value) ? value : 'overview' })
   watch(tab, value => {
     if (route.params.platform !== p) return

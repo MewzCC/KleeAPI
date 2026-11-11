@@ -5,7 +5,7 @@ export interface Account {
   packages?: { name?: string; type?: string; remaining?: number; limit?: number; used?: number; unit?: string; expiresAt?: number | string }[];
   checkinError?: string;
   expiresAt?: number | string; email?: string; plan?: string; source?: string; providerUid?: string;
-  models?: string[]; quotaError?: string; modelsError?: string; inFlight?: number;
+  models?: (string | { id: string; name?: string })[]; quotaError?: string; modelsError?: string; inFlight?: number;
   checkedIn?: boolean | null; message?: string; reward?: number | string; balanceBefore?: number; balanceAfter?: number;
   startsAt?: number | string; endsAt?: number | string;
   errorCode?: string; hint?: string;
