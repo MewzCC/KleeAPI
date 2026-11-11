@@ -30,23 +30,28 @@ export function getOnboarding(input: {
   const { platform, keyPresent, accounts, models, selected, tested, clientConfirmed, accountError, modelError, loadingAccounts, loadingModels } = input
   const gateway = platform === 'gateway'
   const currentAccounts = gateway ? accounts : accounts.filter(account => account.active)
-  const connected = keyPresent && !accountError && currentAccounts.some(authorized)
-  const accountStep: Step = { title: '连接账号', done: connected, action: gateway ? 'pool' : 'accounts', button: gateway ? '查看号池' : '管理账号', description: gateway ? '已有授权有效的账号。' : '当前账号已连接。' }
-  if (!keyPresent || accountError?.includes('API Key')) {
-    Object.assign(accountStep, { action: 'settings', button: '设置 API Key', description: '先保存有效的本地服务 API Key。' })
+  const keyRejected = accountError?.includes('API Key')
+  const keyDone = keyPresent && !keyRejected
+  const keyStep: Step = { title: '设置 API Key', done: keyDone, action: 'settings', button: keyDone ? '查看连接设置' : '设置 API Key',
+    description: keyDone ? '已设置本地服务 API Key。' : keyRejected ? 'API Key 无效，请在连接设置中重新保存。' : '保存本地服务 API Key，用于连接 KleeAPI。' }
+  const connected = keyDone && !accountError && currentAccounts.some(authorized)
+  const accountStep: Step = { title: '添加授权账号', done: connected, action: gateway && connected ? 'pool' : 'accounts',
+    button: connected ? gateway ? '查看号池' : '管理账号' : '添加授权账号', description: gateway ? '已有授权有效的账号。' : '当前账号已连接。' }
+  if (!keyDone) {
+    Object.assign(accountStep, { description: '先完成 API Key 设置，再登录或导入平台账号。', disabled: true })
   } else if (accountError || (!connected && loadingAccounts)) {
     Object.assign(accountStep, { action: 'refresh', button: '刷新账号状态', description: accountError ? '无法读取账号状态，请刷新重试。' : '正在读取账号状态…', disabled: loadingAccounts })
   } else if (!connected) {
-    Object.assign(accountStep, { action: 'accounts', button: '管理账号', description: accounts.length
+    Object.assign(accountStep, { button: accounts.length ? '管理账号' : '添加授权账号', description: accounts.length
       ? gateway ? '请启用一个账号，或重新登录已过期的账号。' : '请启用、重新登录或设为当前账号。'
-      : '请先连接一个平台账号。' })
+      : '选择平台并完成官方登录，或导入已有授权。' })
   }
 
   const chosen = models.find(model => model.id === selected)
   const modelDone = connected && !modelError && !!modelConnection(platform, accounts, chosen)
-  const modelStep: Step = { title: '确认模型', done: modelDone, action: 'models', button: '打开模型目录', description: '从模型目录选择要使用的模型。' }
+  const modelStep: Step = { title: '选择模型', done: modelDone, action: 'models', button: '打开模型目录', description: '从模型目录选择要使用的模型。', disabled: !connected }
   if (modelDone) modelStep.description = selected
-  else if (!connected) modelStep.description = '连接账号后即可查看可用模型。'
+  else if (!connected) modelStep.description = '添加授权账号后即可查看可用模型。'
   else if (loadingModels) modelStep.description = '正在读取模型目录…'
   else if (modelError) modelStep.description = '无法读取模型目录，请进入目录刷新。'
   else if (gateway && !models.length) {
@@ -55,11 +60,11 @@ export function getOnboarding(input: {
 
   const testDone = modelDone && tested
   const clientDone = testDone && clientConfirmed
-  const steps: Step[] = [accountStep, modelStep,
-    { title: '测试消息', done: testDone, action: 'test', button: testDone ? '重新测试' : '打开测试聊天', disabled: !modelDone,
-      description: testDone ? '已收到模型回复。' : modelDone ? '发送一条测试消息，确认模型能正常回复。' : '先确认要测试的模型。' },
+  const testStep: Step = { title: '测试消息', done: testDone, action: 'test', button: testDone ? '重新测试' : '打开测试聊天', disabled: !modelDone,
+    description: testDone ? '已收到模型回复。' : modelDone ? '发送一条测试消息，确认模型能正常回复。' : '先选择要测试的模型。' }
+  const steps: Step[] = [keyStep, accountStep, modelStep, testStep,
     { title: '接入客户端', done: clientDone, action: 'client', button: '查看客户端配置', disabled: !testDone,
       description: clientDone ? '你已确认客户端收到回复。' : testDone ? '填写接入配置，并在自己的客户端确认收到回复。' : '先完成测试消息，再用同一配置接入。' },
   ]
-  return { steps, completed: steps.filter(step => step.done).length }
+  return { steps, keyStep, accountStep, modelStep, testStep, completed: steps.filter(step => step.done).length }
 }

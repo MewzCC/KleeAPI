@@ -28,7 +28,7 @@ defineExpose({ focus: () => heading.value?.focus() })
           <span class="step-state">{{ step.done ? '已完成' : current === index ? '当前步骤' : '待完成' }}</span>
         </div>
         <p class="muted">{{ step.action === 'client' && clientCopied && !step.done && !step.disabled ? '将已复制的配置粘贴到客户端，替换占位 Key。发送消息并收到回复后，在这里确认。' : step.description }}</p>
-        <div v-if="step.action === 'accounts' && platform === 'gateway'" class="onboarding-actions">
+        <div v-if="step.action === 'accounts' && platform === 'gateway' && !step.disabled" class="onboarding-actions">
           <RouterLink v-for="item in platforms.filter(p => p !== 'gateway')" :key="item" class="text-link" :to="platformLink(item, 'accounts') + '&onboarding=gateway'" :aria-label="`管理 ${names[item]} 账号`">{{ names[item] }}</RouterLink>
         </div>
         <template v-else-if="step.action === 'client' && clientCopied && !step.done && !step.disabled">
@@ -44,7 +44,7 @@ defineExpose({ focus: () => heading.value?.focus() })
 <style scoped>
 #onboarding-title { scroll-margin-top: 100px; }
 .onboarding-count { color: var(--accent); font-size: 13px; white-space: nowrap; }
-.onboarding-steps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 14px 0 0; padding: 0; list-style: none; }
+.onboarding-steps { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; margin: 14px 0 0; padding: 0; list-style: none; }
 .onboarding-steps li { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; min-width: 0; border: 1px solid var(--border); border-radius: 9px; padding: 12px; }
 .onboarding-steps li.current { border-color: var(--accent); }
 .onboarding-step-heading { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
@@ -54,6 +54,7 @@ defineExpose({ focus: () => heading.value?.focus() })
 .current .step-state, .done .step-state { color: var(--accent); }
 .onboarding-steps p { flex: 1; margin: 0; overflow-wrap: anywhere; }
 .onboarding-actions { display: flex; flex-wrap: wrap; gap: 4px 10px; }
+@media (max-width: 1400px) { .onboarding-steps { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 @media (max-width: 1120px) { .onboarding-steps { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 540px) { .onboarding-steps { grid-template-columns: 1fr; } }
 </style>
