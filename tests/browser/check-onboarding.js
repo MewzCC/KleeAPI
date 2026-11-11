@@ -102,9 +102,18 @@ async (page) => {
   await progress.getByText(/粘贴到客户端/).waitFor();
   await progress.getByRole('button', { name: '我已在客户端收到回复' }).click();
   await count(5);
+  const stepsList = progress.getByRole('list');
+  await stepsList.waitFor({ state: 'hidden' });
+  const expand = progress.getByRole('button', { name: '展开步骤' });
+  assert(await expand.getAttribute('aria-expanded') === 'false', 'Finished onboarding collapses automatically');
+  await expand.click();
+  await stepsList.waitFor();
+  await progress.getByRole('button', { name: '收起步骤' }).click();
+  await stepsList.waitFor({ state: 'hidden' });
   accounts = [{ ...accounts[0], uid: 'replacement' }];
   await refresh();
   await count(3);
+  await stepsList.waitFor();
   await page.setViewportSize({ width: 390, height: 844 });
   assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'Onboarding fits mobile screens');
   assert(!errors.length, errors.join('; '));

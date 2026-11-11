@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { names, platformLink, platforms } from '../modules/session'
 import type { getOnboarding, OnboardingAction } from '../modules/onboarding'
 import type { Platform } from '../types'
@@ -7,20 +7,31 @@ import type { Platform } from '../types'
 const props = defineProps<{ platform: Platform; progress: ReturnType<typeof getOnboarding>; clientCopied: boolean }>()
 const emit = defineEmits<{ navigate: [action: OnboardingAction]; confirmClient: [] }>()
 const current = computed(() => props.progress.steps.findIndex(step => !step.done))
+const finished = computed(() => current.value === -1)
+const expanded = ref(false)
 const heading = ref<HTMLElement>()
+const stepsList = ref<HTMLOListElement>()
+const toggle = ref<HTMLButtonElement>()
+watch(finished, complete => {
+  expanded.value = false
+  if (complete && stepsList.value?.contains(document.activeElement)) void nextTick(() => toggle.value?.focus())
+})
 defineExpose({ focus: () => heading.value?.focus() })
 </script>
 
 <template>
-  <section class="panel onboarding" aria-labelledby="onboarding-title">
+  <section class="panel onboarding" :class="{ 'is-collapsed': finished && !expanded }" aria-labelledby="onboarding-title">
     <div class="section-heading">
       <div>
         <h2 id="onboarding-title" ref="heading" tabindex="-1">首次接入</h2>
-        <p class="muted">测试和客户端确认状态保留在当前页面会话。</p>
+        <p v-if="!finished || expanded" class="muted">测试和客户端确认状态保留在当前页面会话。</p>
       </div>
-      <span class="onboarding-count" role="status">已完成 {{ progress.completed }} / {{ progress.steps.length }} 步</span>
+      <div class="onboarding-summary">
+        <span class="onboarding-count" role="status">已完成 {{ progress.completed }} / {{ progress.steps.length }} 步</span>
+        <button v-if="finished" ref="toggle" class="text-link" type="button" :aria-expanded="expanded" aria-controls="onboarding-steps" @click="expanded = !expanded">{{ expanded ? '收起步骤' : '展开步骤' }}</button>
+      </div>
     </div>
-    <ol class="onboarding-steps">
+    <ol v-show="!finished || expanded" id="onboarding-steps" ref="stepsList" class="onboarding-steps">
       <li v-for="(step, index) in progress.steps" :key="step.title" :aria-current="current === index ? 'step' : undefined" :class="{ current: current === index, done: step.done }">
         <div class="onboarding-step-heading">
           <span class="step-index" aria-hidden="true">{{ index + 1 }}</span>
@@ -43,6 +54,8 @@ defineExpose({ focus: () => heading.value?.focus() })
 
 <style scoped>
 #onboarding-title { scroll-margin-top: 100px; }
+.onboarding.is-collapsed > .section-heading { margin-bottom: 0; }
+.onboarding-summary { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 14px; }
 .onboarding-count { color: var(--accent); font-size: 13px; white-space: nowrap; }
 .onboarding-steps { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; margin: 14px 0 0; padding: 0; list-style: none; }
 .onboarding-steps li { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; min-width: 0; border: 1px solid var(--border); border-radius: 9px; padding: 12px; }
