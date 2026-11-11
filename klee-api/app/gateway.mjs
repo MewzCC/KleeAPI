@@ -667,7 +667,9 @@ export async function createGateway({
 
   /** 槽位持续占用到响应结束；只有平台明确确认未生成的拒绝才允许换号。 */
   async function chat(req, res, request) {
-    const conversation = captureConversation(request.messages);
+    const recordVersion = usageLog.recordVersion();
+    const permit = usageLog.beginCapture();
+    const conversation = permit === null ? null : captureConversation(request.messages);
     const record = {
       id: randomUUID(),
       startedAt: Date.now(),
@@ -770,7 +772,7 @@ export async function createGateway({
           }
           await relay(response, res, request, controller.signal, (data) => {
             usage = mergeCompletionUsage(usage, data);
-            conversation.observe(data);
+            conversation?.observe(data);
           });
           return;
         } finally {
@@ -800,7 +802,7 @@ export async function createGateway({
       res.off("close", close);
       controllers.delete(controller);
       controller.abort();
-      usageLog.add({ ...record, durationMs: Math.round(performance.now() - started), ...usageFields(usage) }, conversation.snapshot(record.status === 'success'));
+      usageLog.add({ ...record, durationMs: Math.round(performance.now() - started), ...usageFields(usage) }, conversation?.snapshot(record.status === 'success'), permit, recordVersion);
     }
   }
 
@@ -820,7 +822,7 @@ export async function createGateway({
       }
       if (req.method === "OPTIONS") {
         res.writeHead(204, {
-          "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+          "Access-Control-Allow-Methods": "GET,POST,PATCH,DELETE,OPTIONS",
           "Access-Control-Allow-Headers": "Authorization,Content-Type",
           "Access-Control-Max-Age": "300",
         });
@@ -881,7 +883,13 @@ export async function createGateway({
       }
       if (req.method === "GET" && path === "/api/gateway/usage")
         return json(res, 200, usageLog.snapshot());
+      if (req.method === 'PATCH' && path === '/api/gateway/usage/settings')
+        return json(res, 200, usageLog.updateSettings(await readBody(req, 4096)));
+      if (req.method === 'DELETE' && path === '/api/gateway/usage')
+        return json(res, 200, usageLog.clear());
       const usageDetail = path.match(/^\/api\/gateway\/usage\/([a-zA-Z0-9_-]{1,80})$/);
+      if (req.method === 'DELETE' && usageDetail)
+        return json(res, 200, usageLog.remove(usageDetail[1]));
       if (req.method === 'GET' && usageDetail) {
         const detail = usageLog.detail(usageDetail[1]);
         if (!detail) throw new ApiError('调用记录不存在或已过期', 404, 'usage_not_found');
@@ -982,6 +990,7 @@ export async function createGateway({
       });
     },
     async close() {
+      usageLog.close();
       for (const controller of controllers) controller.abort();
       if (server.listening)
         await new Promise((resolve) => {

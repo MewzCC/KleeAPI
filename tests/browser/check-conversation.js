@@ -13,7 +13,7 @@ async (page) => {
   const open = model => panel.getByRole('row').filter({ hasText: model }).getByRole('button', { name: '详情', exact: true }).click();
   await open('old-dialog');
   await page.getByRole('tab', { name: '对话内容', exact: true }).click();
-  await page.getByText('此历史记录未保存对话原文，无法恢复。新调用会在此展示请求消息和模型回复。', { exact: true }).waitFor();
+  await page.getByText('此条记录未保存对话原文。可以在「记录与隐私」中选择是否保存后续调用的原文。', { exact: true }).waitFor();
   assert(details.length === 0, 'Legacy records should explain missing text without making a request');
   await page.keyboard.press('Escape');
   await page.getByRole('dialog').waitFor({ state: 'hidden' });

@@ -41,12 +41,15 @@ test('conversation files persist locally, list metadata stays small and legacy r
   t.after(() => rm(base, { recursive: true, force: true }));
   const file = join(base, 'usage.json');
   const log = createUsageLog(file);
+  t.after(() => log.close());
+  log.updateSettings({ mode: 'content' });
   const conversation = captureConversation([{ role: 'user', content: 'private-prompt' }]).snapshot(false);
   log.add({ id: 'new-call', startedAt: Date.now() }, conversation);
   log.add({ id: 'old-call', startedAt: Date.now() });
   assert.equal(JSON.stringify(log.snapshot()).includes('private-prompt'), false);
   assert.equal((await readFile(file, 'utf8')).includes('private-prompt'), false);
   const loaded = createUsageLog(file);
+  t.after(() => loaded.close());
   assert.equal(loaded.detail('new-call').conversation.request[0].content, 'private-prompt');
   assert.equal(loaded.detail('old-call').conversation, null);
   assert.equal(loaded.detail('../usage'), null);
@@ -65,11 +68,12 @@ for (const stream of [false, true]) test(`gateway ${stream ? 'SSE' : 'JSON'} log
   } });
   await new Promise(resolve => gateway.server.listen(0, '127.0.0.1', resolve));
   t.after(() => gateway.close());
-  const request = (path, body, key = 'klee-dialog-test') => new Promise((resolve, reject) => {
-    const req = httpRequest({ host: '127.0.0.1', port: gateway.server.address().port, path, method: body ? 'POST' : 'GET', headers: { Host: '127.0.0.1:18887', Authorization: 'Bearer ' + key, 'Content-Type': 'application/json' } }, res => {
+  const request = (path, body, key = 'klee-dialog-test', method = body ? 'POST' : 'GET') => new Promise((resolve, reject) => {
+    const req = httpRequest({ host: '127.0.0.1', port: gateway.server.address().port, path, method, headers: { Host: '127.0.0.1:18887', Authorization: 'Bearer ' + key, 'Content-Type': 'application/json' } }, res => {
       let text = ''; res.on('data', part => { text += part; }); res.on('end', () => resolve({ status: res.statusCode, text }));
     }); req.on('error', reject); req.end(body ? JSON.stringify(body) : undefined);
   });
+  assert.equal((await request('/api/gateway/usage/settings', { mode: 'content' }, undefined, 'PATCH')).status, 200);
   assert.equal((await request('/v1/chat/completions', { model: 'trae/cn/demo', stream, messages: [{ role: 'user', content: '模拟问题' }] })).status, 200);
   const list = JSON.parse((await request('/api/gateway/usage')).text);
   assert.equal(list.records[0].hasConversation, true);

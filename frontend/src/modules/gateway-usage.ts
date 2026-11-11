@@ -44,6 +44,13 @@ export interface GatewayUsage {
   records: GatewayCall[]
   limit: number
   warning: string
+  settings: UsageSettings
+  storedConversations: number
+}
+
+export interface UsageSettings {
+  mode: 'stats' | 'content'
+  retentionDays: 0 | 7 | 30 | 90
 }
 
 export const callStatuses = { success: '成功', failed: '失败', canceled: '已取消' }

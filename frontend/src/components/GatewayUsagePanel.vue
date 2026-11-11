@@ -1,17 +1,24 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onDeactivated, onUnmounted, ref, watch } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { request } from '../api/client'
 import { kleeTheme } from '../modules/decoration'
 import { date, names, safe, session } from '../modules/session'
 import {
   callStatuses, creditGroup, creditText, hasCreditEstimate, formatUsage, platformName, regionName, summarizeUsage,
-  usageModels, usageTrend, type GatewayCall, type GatewayUsage, type ConversationLog,
+  usageModels, usageTrend, type GatewayCall, type GatewayUsage, type ConversationLog, type UsageSettings,
 } from '../modules/gateway-usage'
 import GatewayUsageChart from './GatewayUsageChart.vue'
 
 const snapshot = ref<GatewayUsage>()
 const busy = ref(false)
 const error = ref('')
+const draft = ref<UsageSettings>({ mode: 'stats', retentionDays: 0 })
+const changing = ref(false)
+const retentionOptions = [{ value: 0, label: '不限天数' }, { value: 7, label: '7 天' }, { value: 30, label: '30 天' }, { value: 90, label: '90 天' }] as const
+const settingsChanged = computed(() => snapshot.value?.settings && (
+  draft.value.mode !== snapshot.value.settings.mode || draft.value.retentionDays !== snapshot.value.settings.retentionDays
+))
 const days = ref(7)
 const platform = ref('all')
 const status = ref('all')
@@ -28,6 +35,30 @@ let detailVersion = 0
 const fetchedAt = ref(Date.now())
 let requestVersion = 0
 const pageSize = 15
+const usagePath = '/api/gateway/usage'
+
+function closeDetail() {
+  detailVersion++
+  detailOpen.value = false
+  selected.value = undefined
+  conversation.value = null
+  detailLoading.value = false
+  detailError.value = ''
+}
+
+function showSnapshot(data: GatewayUsage) {
+  if (!Array.isArray(data.records)) throw new Error('网关返回了无效的调用记录。')
+  snapshot.value = data
+  if (data.settings) draft.value = { ...data.settings }
+  fetchedAt.value = Date.now()
+  page.value = 1
+  const previous = selected.value
+  if (previous) {
+    const row = data.records.find(item => item.id === previous.id)
+    if (!row || row.hasConversation !== previous.hasConversation) closeDetail()
+    else selected.value = row
+  }
+}
 
 /** 刷新保留上次成功结果，切换 Key 后隔离旧请求和记录。 */
 async function refresh() {
@@ -36,12 +67,9 @@ async function refresh() {
   busy.value = true
   error.value = ''
   try {
-    const data = await request<GatewayUsage>('gateway', '/api/gateway/usage')
+    const data = await request<GatewayUsage>('gateway', usagePath)
     if (version !== requestVersion) return
-    if (!Array.isArray(data.records)) throw new Error('网关返回了无效的调用记录。')
-    snapshot.value = data
-    fetchedAt.value = Date.now()
-    page.value = 1
+    showSnapshot(data)
   } catch (failure) {
     if (version === requestVersion) error.value = safe(failure)
   } finally {
@@ -51,16 +79,57 @@ async function refresh() {
 
 watch(() => session.keys.gateway, () => {
   snapshot.value = undefined
-  detailOpen.value = false
-  detailVersion++
-  conversation.value = null
-  detailLoading.value = false
-  detailError.value = ''
+  closeDetail()
   error.value = ''
   busy.value = false
   void refresh()
-}, { immediate: true })
+}, { immediate: true, flush: 'sync' })
+onDeactivated(closeDetail)
+onUnmounted(() => { requestVersion++; detailVersion++ })
 watch([days, platform, status, search], () => { page.value = 1 })
+
+async function changeUsage(path: string, options: RequestInit, success: string, confirmation?: { title: string; message: string; button: string }) {
+  if (changing.value || busy.value || !session.keys.gateway) return
+  const version = ++requestVersion
+  const key = session.keys.gateway
+  changing.value = true
+  try {
+    if (confirmation) await ElMessageBox.confirm(confirmation.message, confirmation.title, {
+      type: 'warning', confirmButtonText: confirmation.button, cancelButtonText: '取消', distinguishCancelAndClose: true,
+    })
+    if (version !== requestVersion || key !== session.keys.gateway) return
+    const data = await request<GatewayUsage>('gateway', path, options, key)
+    if (version !== requestVersion) return
+    showSnapshot(data)
+    error.value = ''
+    ElMessage.success(success)
+  } catch (failure) {
+    if (version === requestVersion && failure !== 'cancel' && failure !== 'close') {
+      const message = safe(failure)
+      await refresh()
+      if (session.keys.gateway === key) ElMessage.error(message)
+    }
+  } finally { changing.value = false }
+}
+
+function saveSettings() {
+  if (!settingsChanged.value || !snapshot.value?.settings) return
+  const next = { ...draft.value }
+  const previous = snapshot.value.settings.retentionDays
+  const shorter = next.retentionDays > 0 && (previous === 0 || next.retentionDays < previous)
+  void changeUsage(usagePath + '/settings', { method: 'PATCH', body: JSON.stringify(next) }, '记录设置已保存。', shorter ? {
+    title: '缩短保留期限', message: `超过 ${next.retentionDays} 天的调用记录及对话原文将立即删除，且无法恢复。`, button: '确认保存',
+  } : undefined)
+}
+
+function removeRecord(row?: GatewayCall) {
+  const path = row ? usagePath + '/' + encodeURIComponent(row.id) : usagePath
+  void changeUsage(path, { method: 'DELETE' }, row ? '已删除此条记录。' : '已清空全部记录。', row ? {
+    title: '删除调用记录', message: '此条调用记录及其对话原文将从本机删除，且无法恢复。', button: '确认删除',
+  } : {
+    title: '清空全部记录', message: '将删除全部调用记录及对话原文，包括当前筛选条件未显示的记录。此操作无法撤销。', button: '确认清空',
+  })
+}
 
 const filtered = computed(() => {
   const since = new Date(fetchedAt.value)
@@ -116,12 +185,38 @@ async function showDetail(row: GatewayCall) {
   <el-card shadow="never" class="usage-panel" v-loading="busy">
     <el-row align="middle" justify="space-between" class="usage-heading">
       <el-text tag="h2">网关用量</el-text>
-      <el-button :loading="busy" :disabled="!session.keys.gateway" @click="refresh">刷新记录</el-button>
+      <el-button :loading="busy" :disabled="!session.keys.gateway || changing" @click="refresh">刷新记录</el-button>
     </el-row>
     <el-alert v-if="error" :title="error" type="error" :closable="false" show-icon />
     <el-alert v-if="snapshot?.warning" :title="snapshot.warning" type="warning" :closable="false" show-icon />
     <el-empty v-if="!session.keys.gateway" description="请先保存网关 API Key。" />
     <template v-else-if="snapshot">
+      <section v-if="snapshot.settings" class="usage-privacy" aria-labelledby="usage-privacy-title">
+        <div class="usage-privacy-heading">
+          <div>
+            <h3 id="usage-privacy-title">记录与隐私</h3>
+            <p class="muted">本机已保存 {{ snapshot.storedConversations }} 条对话原文。调用记录最多保留 {{ snapshot.limit }} 条。</p>
+          </div>
+          <el-button type="danger" plain :disabled="changing || busy" @click="removeRecord()">清空全部记录</el-button>
+        </div>
+        <div class="usage-privacy-controls">
+          <div>
+            <span id="usage-mode-label" class="usage-control-label">后续调用</span>
+            <el-radio-group v-model="draft.mode" aria-labelledby="usage-mode-label" :disabled="changing || busy">
+              <el-radio-button value="stats">只记统计</el-radio-button>
+              <el-radio-button value="content">保存原文</el-radio-button>
+            </el-radio-group>
+          </div>
+          <div>
+            <span class="usage-control-label">保留期限</span>
+            <el-select v-model="draft.retentionDays" aria-label="保留期限" :disabled="changing || busy">
+              <el-option v-for="option in retentionOptions" :key="option.value" :label="option.label" :value="option.value" />
+            </el-select>
+          </div>
+          <el-button type="primary" :loading="changing" :disabled="busy || !settingsChanged" @click="saveSettings">保存设置</el-button>
+        </div>
+        <p class="muted">切换保存方式只影响后续调用。保留期限也适用于已有的统计和原文。</p>
+      </section>
       <el-row class="usage-filters">
         <el-select v-model="days" aria-label="时间范围">
           <el-option label="最近 7 天" :value="7" />
@@ -226,7 +321,7 @@ async function showDetail(row: GatewayCall) {
     </template>
   </el-card>
 
-  <el-dialog v-model="detailOpen" title="调用详情" width="min(820px, calc(100vw - 24px))">
+  <el-dialog v-model="detailOpen" title="调用详情" width="min(820px, calc(100vw - 24px))" @close="closeDetail">
     <el-tabs v-model="detailTab">
     <el-tab-pane label="调用信息" name="info">
     <el-descriptions v-if="selected" :column="1" border class="usage-detail">
@@ -272,16 +367,26 @@ async function showDetail(row: GatewayCall) {
           <p v-if="!message.content && !message.reasoning && !message.tools?.length" class="muted">未返回文本内容。</p>
         </article>
       </template>
-      <p v-else class="muted">此历史记录未保存对话原文，无法恢复。新调用会在此展示请求消息和模型回复。</p>
+      <p v-else class="muted">此条记录未保存对话原文。可以在「记录与隐私」中选择是否保存后续调用的原文。</p>
     </section>
     </el-tab-pane>
     </el-tabs>
+    <template v-if="selected && snapshot?.settings" #footer>
+      <el-button type="danger" plain :disabled="changing || busy" @click="removeRecord(selected)">删除此条记录</el-button>
+    </template>
   </el-dialog>
 </template>
 
 <style scoped>
 .usage-panel { --el-card-border-color: var(--border); --el-card-bg-color: var(--surface); border-radius: 13px; margin-bottom: 22px; }
 .usage-heading { gap: 8px; margin-bottom: 12px; }
+.usage-privacy { border: 1px solid var(--border); border-radius: 10px; margin: 12px 0 20px; padding: 16px; }
+.usage-privacy-heading, .usage-privacy-controls { display: flex; flex-wrap: wrap; gap: 12px; }
+.usage-privacy-heading { align-items: center; justify-content: space-between; }
+.usage-privacy-heading h3 { margin: 0 0 4px; }
+.usage-privacy-controls { align-items: end; margin: 14px 0 10px; }
+.usage-control-label { display: block; font-size: 12px; margin-bottom: 5px; }
+.usage-privacy-controls .el-select { width: 120px; }
 .usage-filters { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) minmax(0, 1.5fr); gap: 10px; margin-bottom: 16px; }
 .usage-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; padding: 14px; margin-bottom: 14px; border: 1px solid var(--border); border-radius: 10px; }
 .usage-credits { gap: 8px 12px; }

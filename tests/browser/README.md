@@ -28,6 +28,8 @@ npx --yes --package @playwright/cli@0.1.24 playwright-cli run-code --filename=te
 npx --yes --package @playwright/cli@0.1.24 playwright-cli run-code --filename=tests/browser/check-credit-estimates.js
 npx --yes --package @playwright/cli@0.1.24 playwright-cli run-code --filename=tests/browser/mock-console.js
 npx --yes --package @playwright/cli@0.1.24 playwright-cli run-code --filename=tests/browser/check-conversation.js
+npx --yes --package @playwright/cli@0.1.24 playwright-cli run-code --filename=tests/browser/mock-console.js
+npx --yes --package @playwright/cli@0.1.24 playwright-cli run-code --filename=tests/browser/check-usage-privacy.js
 npx --yes --package @playwright/cli@0.1.24 playwright-cli close
 ```
 
