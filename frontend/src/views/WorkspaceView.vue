@@ -25,6 +25,9 @@ const tabs = computed(() => [{ id: 'overview', label: '工作台' }, ...(p === '
 const filteredAccounts = computed(() => accounts.value.filter(a => `${a.nickname || ''} ${a.email || ''} ${a.uid} ${a.region || ''}`.toLowerCase().includes(accountSearch.value.toLowerCase()) && (accountState.value === 'all' || accountState.value === 'enabled' && a.enabled !== false || accountState.value === 'attention' && (a.status !== 'ready' || a.enabled === false))))
 const models = computed(() => p === 'gateway' ? pool.value?.models || [] : catalog.value?.data || [])
 const confirmedModel = ref(''), tested = ref(false), clientConfirmed = ref(false), testRevision = ref(0)
+const guided = ref(false), clientCopied = ref(false)
+const progressPanel = ref<InstanceType<typeof OnboardingProgress>>()
+const fromGateway = computed(() => p !== 'gateway' && route.params.platform === p && route.query.onboarding === 'gateway')
 const progressAccounts = computed(() => p === 'gateway' ? pool.value?.accounts || [] : accounts.value)
 const accountError = computed(() => p === 'gateway' ? errors.pool : errors.accounts)
 const modelError = computed(() => p === 'gateway' ? errors.pool : errors.models)
@@ -34,14 +37,15 @@ const onboarding = computed(() => getOnboarding({
   tested: tested.value, clientConfirmed: clientConfirmed.value, accountError: accountError.value, modelError: modelError.value,
   loadingAccounts: busy.pool || busy.accounts, loadingModels: busy.pool || busy.models,
 }))
-function resetTest() { tested.value = false; clientConfirmed.value = false; testRevision.value++ }
+const nextStep = computed(() => onboarding.value.steps.find(step => !step.done))
+function resetTest() { tested.value = false; clientConfirmed.value = false; clientCopied.value = false; testRevision.value++ }
 watch([confirmedModel, connection, accountError, modelError, () => session.keys[p], () => baseURL(p)], resetTest, { flush: 'sync' })
 onDeactivated(() => apiGuide.value?.closeChat())
 
 function handleTest(model: string, revision: number, success: boolean) {
   if (revision !== testRevision.value || model !== confirmedModel.value || !onboarding.value.steps[1]?.done) return
   tested.value = success
-  if (!success) clientConfirmed.value = false
+  if (!success) { clientConfirmed.value = false; clientCopied.value = false }
 }
 function changeGuideModel(id: string) {
   selected.value = id
@@ -49,6 +53,7 @@ function changeGuideModel(id: string) {
 }
 async function navigateOnboarding(action: OnboardingAction) {
   if (action === 'refresh') { refresh(); return }
+  if (tab.value === 'overview') guided.value = onboarding.value.completed < onboarding.value.steps.length
   if (action === 'accounts') { tab.value = 'accounts'; return }
   if (action === 'test' || action === 'client') {
     tab.value = 'guide'
@@ -58,6 +63,30 @@ async function navigateOnboarding(action: OnboardingAction) {
     return
   }
   tab.value = action
+}
+watch(tab, value => { if (value === 'overview') guided.value = false })
+
+async function returnToOnboarding() {
+  if (route.params.platform !== p) return
+  tab.value = 'overview'
+  await nextTick()
+  progressPanel.value?.focus()
+}
+
+function confirmClient(confirmed: boolean) {
+  if (confirmed && !onboarding.value.steps[2]?.done) return
+  clientConfirmed.value = confirmed
+  if (confirmed && guided.value) void returnToOnboarding()
+}
+
+function configCopied() {
+  if (!guided.value || tab.value !== 'guide' || route.params.platform !== p) return
+  clientCopied.value = !!onboarding.value.steps[2]?.done
+  void returnToOnboarding()
+}
+
+function chatClosed() {
+  if (guided.value && tab.value === 'guide' && onboarding.value.steps[2]?.done) void returnToOnboarding()
 }
 const filtered = computed(() => models.value.filter(m => `${m.id} ${m.name || ''} ${(m.canonicalIds || []).join(' ')}`.toLowerCase().includes(search.value.toLowerCase())))
 const modelPage = ref(1), modelPageSize = ref(10)
@@ -79,7 +108,17 @@ const quotaTotals = computed(() => {
   return Array.from(groups, ([unit, group]) => ({ unit, ...group }))
 })
 const quotaText = (a: Account) => a.unlimited ? '不限额度' : number(a.remaining) + ' ' + (a.unit || quota.value?.unit || '')
-function selectModel(id: string) { confirmedModel.value = id; selected.value = id; tab.value = 'guide'; void copy(id) }
+function selectModel(id: string) {
+  confirmedModel.value = id
+  selected.value = id
+  if (guided.value) { void returnToOnboarding(); return }
+  tab.value = 'guide'
+  void copy(id)
+}
+async function copyModel(id: string) {
+  const returnAfterCopy = guided.value
+  if (await copy(id) && returnAfterCopy && guided.value && tab.value === 'models' && route.params.platform === p) selectModel(id)
+}
 function addAccount() { tab.value = 'accounts'; connecting.value = true; setTimeout(() => document.getElementById('connect-account')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 0) }
 </script>
 <template>
@@ -91,10 +130,28 @@ function addAccount() { tab.value = 'accounts'; connecting.value = true; setTime
       <p class="nav-label">{{ names[p] }}</p><nav id="sidebar-navigation" aria-label="工作空间导航"><button v-for="item in tabs" :key="item.id" :class="{ active: tab === item.id }" :aria-label="item.label" :title="item.label" :aria-current="tab === item.id ? 'page' : undefined" @click="tab = item.id"><ConsoleIcon :name="item.id" :size="18" /><span class="sidebar-text">{{ item.label }}</span><span v-if="item.id === 'accounts' && accounts.length" class="nav-count sidebar-text">{{ accounts.length }}</span></button></nav>
       <div class="sidebar-bottom"><RouterLink class="sidebar-home" :to="portalLink()" aria-label="所有平台" title="所有平台"><ConsoleIcon name="back" :size="16" /><span class="sidebar-text">所有平台</span></RouterLink><span class="local-label"><i /> 本地工作空间</span><code>{{ baseURL(p) }}</code></div>
     </aside>
-    <main id="workspace-content" class="workspace-main" tabindex="-1"><header class="workspace-top"><div class="breadcrumbs">{{ names[p] }}<span>/</span><strong>{{ title }}</strong></div><div class="theme-header-actions"><span class="local-label"><i /> 本地运行</span><ThemeToggle /></div></header>
+    <main id="workspace-content" class="workspace-main" tabindex="-1"><header class="workspace-top"><div class="breadcrumbs">{{ names[p] }}<span>/</span><strong>{{ title }}</strong></div><div class="theme-header-actions"><span class="local-label"><i /> 本地运行</span><ThemeToggle /></div>
+      <section v-if="fromGateway || (guided && tab !== 'overview')" class="setup-progress" aria-label="首次接入进度">
+        <template v-if="fromGateway">
+          <div role="status"><strong>第 1 步 / 共 4 步 · 连接账号</strong><span class="muted">{{ onboarding.steps[0]?.done ? '账号已连接，返回统一网关继续确认模型。' : onboarding.steps[0]?.description }}</span></div>
+          <div class="setup-progress-actions">
+            <el-button v-if="!onboarding.steps[0]?.done && onboarding.steps[0]?.action === 'settings' && tab !== 'settings'" size="small" @click="tab = 'settings'">设置 API Key</el-button>
+            <el-button v-else-if="!onboarding.steps[0]?.done && onboarding.steps[0]?.action === 'accounts' && tab !== 'accounts'" size="small" @click="tab = 'accounts'">连接账号</el-button>
+            <RouterLink class="text-link" :to="platformLink('gateway', 'overview')">返回统一网关向导</RouterLink>
+          </div>
+        </template>
+        <template v-else>
+          <div role="status"><strong>已完成 {{ onboarding.completed }} / {{ onboarding.steps.length }} 步</strong><span v-if="nextStep" class="muted"><span>下一步：</span><span>{{ nextStep.title }}</span> · {{ nextStep.description }}</span></div>
+          <div class="setup-progress-actions">
+            <el-button v-if="nextStep && !nextStep.disabled && nextStep.action !== tab && !(p === 'gateway' && nextStep.action === 'accounts')" size="small" @click="navigateOnboarding(nextStep.action)">{{ nextStep.button }}</el-button>
+            <button class="text-link" type="button" @click="returnToOnboarding">返回向导</button>
+          </div>
+        </template>
+      </section>
+    </header>
     <div class="page-content"><section class="page-heading"><div><p class="eyebrow">{{ p === 'gateway' ? '你的模型连接中心' : names[p] + ' 工作空间' }}</p><h1>{{ tab === 'overview' ? '一切就绪，从这里开始。' : title }}</h1><p class="muted">{{ descriptions[tab] }}</p></div><div class="actions"><el-button v-if="tab === 'guide'" type="primary" @click="apiGuide?.openChat()">打开测试聊天</el-button><el-button v-if="tab === 'overview'" :loading="busy.accounts || busy.pool || busy.checkins" :disabled="!session.keys[p] || busy.claim" @click="refresh"><ConsoleIcon name="refresh" :size="16" />刷新数据</el-button><el-button v-if="p !== 'gateway' && ['overview', 'accounts'].includes(tab)" type="primary" @click="addAccount"><ConsoleIcon name="add" :size="16" />添加账号</el-button></div></section>
     <div v-if="!session.keys[p] && tab !== 'settings'" class="connection-notice"><ConsoleIcon name="key" /><div><strong>先连接 {{ names[p] }}</strong><p>保存此服务的 API Key，即可读取账号、签到与额度。</p></div><el-button @click="tab = 'settings'">配置连接 →</el-button></div>
-    <OnboardingProgress v-if="tab === 'overview'" :platform="p" :progress="onboarding" @navigate="navigateOnboarding" />
+    <OnboardingProgress v-if="tab === 'overview'" ref="progressPanel" :platform="p" :progress="onboarding" :client-copied="clientCopied" @navigate="navigateOnboarding" @confirm-client="confirmClient(true)" />
     <WorkspaceOverview v-if="tab === 'overview'" :platform="p" :accounts="accounts" :pool="pool" :checkins="checkins" :checkin-loading="!!(busy.checkins || busy.claim)" :checkin-error="errors.checkins" :catalog="catalog" :connected="!!session.keys[p]" :loading="!!(busy.accounts || busy.pool)" :error="errors.pool || errors.accounts" @navigate="tab = $event" @connect="addAccount" @saved="refresh" />
     <template v-if="tab === 'settings'"><KeyPanel :platform="p" @saved="refresh" /><section class="panel"><div class="section-heading"><h2>本地连接信息</h2><el-tag effect="plain">仅监听本机</el-tag></div><div class="settings-row"><span>服务地址</span><code>{{ baseURL(p) }}</code><el-button text @click="copy(baseURL(p))">复制</el-button></div><div class="settings-row"><span>API Base URL</span><code>{{ baseURL(p) }}/v1</code><el-button text @click="copy(baseURL(p) + '/v1')">复制</el-button></div><div class="settings-row"><span>界面外观</span><ThemeToggle /></div></section></template>
     <GatewayUsagePanel v-if="p === 'gateway' && tab === 'usage'" />
@@ -103,7 +160,7 @@ function addAccount() { tab.value = 'accounts'; connecting.value = true; setTime
 
     <template v-if="tab === 'accounts'">
       <section class="panel"><div class="section-heading"><h2>已连接账号 <span class="count">{{ accounts.length }}</span></h2><el-button :disabled="!session.keys[p]" :loading="busy.accounts" @click="refreshAccounts">刷新账号</el-button></div><el-alert v-if="warning || errors.accounts" :title="warning || errors.accounts" type="warning" :closable="false" /><div class="stats"><div><span>已连接</span><strong>{{ accounts.length }}</strong></div><div><span>已启用</span><strong>{{ accounts.filter(a => a.enabled).length }}</strong></div><div><span>当前账号</span><strong class="stat-name">{{ accounts.find(a => a.active)?.nickname || accounts.find(a => a.active)?.uid || '未选择' }}</strong></div></div><div class="filter-bar"><div class="filter-tabs"><button v-for="item in [{ id: 'all', label: '全部' }, { id: 'enabled', label: '已启用' }, { id: 'attention', label: '需关注' }]" :key="item.id" :class="{ active: accountState === item.id }" :aria-pressed="accountState === item.id" @click="accountState = item.id">{{ item.label }}</button></div><el-input v-model="accountSearch" clearable aria-label="搜索账号" placeholder="搜索昵称、邮箱或 UID" class="search" /></div><el-skeleton v-if="busy.accounts && !accounts.length" :rows="4" animated /><div class="rows"><article v-for="a in filteredAccounts" :key="a.uid" class="account-row"><span class="avatar">{{ (a.nickname || 'A').slice(0, 1).toUpperCase() }}</span><div class="account-info"><h3>{{ a.nickname || a.uid }} <el-tag v-if="a.active" type="success">当前账号</el-tag> <el-tag :type="a.enabled !== false && a.status === 'ready' ? 'success' : 'warning'">{{ a.enabled === false ? '已停用' : statusName(a.status) }}</el-tag></h3><p class="muted">{{ a.region || '未知区域' }} · {{ a.uid }} · 来源 {{ a.source || '未知' }}<br>有效期 {{ date(a.expiresAt) }} · 余额 {{ number(a.credits) }}<span v-if="p === 'qoder'"> {{ a.region === 'cn' ? 'Qoder CN' : 'Qoder Global' }} Credits</span><br v-if="a.email || a.plan"><span v-if="a.email">{{ a.email }} · </span>{{ a.plan }}</p><div class="actions"><el-button :disabled="busy.action || a.active || !a.enabled || a.status === 'expired'" @click="action(a, 'active')">设为当前</el-button><el-button :disabled="busy.action" @click="action(a, 'enabled')">{{ a.enabled ? '停用' : '启用' }}</el-button><el-button :disabled="busy.action" @click="action(a, 'refresh')">刷新授权</el-button><el-button v-if="p === 'trae'" :disabled="busy.action || busy.claim" @click="action(a, 'device')">同步本机设备</el-button><el-dropdown trigger="click" @command="(command: string) => { if (command === 'export') connecting = true; action(a, command) }"><el-button :disabled="busy.action">更多 ···</el-button><template #dropdown><el-dropdown-menu><el-dropdown-item command="export">导出凭据到编辑区</el-dropdown-item><el-dropdown-item command="delete" divided>删除此账号</el-dropdown-item></el-dropdown-menu></template></el-dropdown></div></div></article></div><el-empty v-if="!busy.accounts && !filteredAccounts.length" :description="accounts.length ? '没有符合条件的账号。' : '还没有连接账号。'" /></section>
-      <details id="connect-account" class="connect-details" :open="connecting || !accounts.length" @toggle="connecting = ($event.target as HTMLDetailsElement).open"><summary><span><ConsoleIcon name="add" />连接新的账号</span><small>官方登录 / 凭据导入</small></summary><div class="connection-grid"><section class="panel"><p class="eyebrow">CONNECT ACCOUNT</p><h2>官方登录</h2><p class="muted">在官方页面完成授权后，自动将账号导入本地。</p><el-form label-position="top"><el-form-item label="账号区域"><el-select v-model="region" :disabled="p === 'trae' || !!login"><el-option label="国内版" value="cn" /><el-option label="国际版" value="global" /></el-select></el-form-item></el-form><p v-if="p === 'trae'" class="muted">Trae 使用本地回调 http://127.0.0.1:18080/authorize，请保持此页面打开。</p><div class="actions"><el-button type="primary" :loading="busy.login" :disabled="!!login || !session.keys[p]" @click="startLogin">官方登录</el-button><el-button v-if="p === 'workbuddy'" :loading="busy.import" @click="importCredential(true)">读取桌面登录</el-button><el-button v-if="login" :loading="busy.login" @click="cancelLogin">取消登录</el-button></div><div v-if="login" class="login-status" role="status"><p>等待官方授权，完成后自动导入…</p><a :href="login.url" target="_blank" rel="noopener noreferrer">重新打开官方登录页面 ↗</a></div></section>
+      <details id="connect-account" class="connect-details" :open="connecting || !accounts.length" @toggle="connecting = ($event.target as HTMLDetailsElement).open"><summary><span><ConsoleIcon name="add" />连接新的账号</span><small>官方登录 / 凭据导入</small></summary><div class="connection-grid"><section class="panel"><p class="eyebrow">CONNECT ACCOUNT</p><h2>官方登录</h2><p class="muted">在官方页面完成授权后，自动将账号导入本地。</p><el-form label-position="top"><el-form-item label="账号区域"><el-select v-model="region" :disabled="p === 'trae' || !!login"><el-option label="国内版" value="cn" /><el-option label="国际版" value="global" /></el-select></el-form-item></el-form><p v-if="p === 'trae'" class="muted">通过浏览器授权。添加其他账号时，把本次授权链接复制到无痕窗口或对应账号的浏览器配置，并保持 KleeAPI 页面打开。</p><div class="actions"><el-button type="primary" :loading="busy.login" :disabled="!!login || !session.keys[p]" @click="startLogin">{{ p === 'trae' ? '生成授权链接' : '官方登录' }}</el-button><el-button v-if="p === 'workbuddy'" :loading="busy.import" @click="importCredential(true)">读取桌面登录</el-button><el-button v-if="login" :loading="busy.login" @click="cancelLogin">取消登录</el-button></div><div v-if="login" class="login-status" role="status"><p>等待官方授权，完成后自动导入…</p><div class="actions"><a class="text-link" :href="login.url" target="_blank" rel="noopener noreferrer">打开官方登录页面 ↗</a><el-button v-if="p === 'trae'" @click="copy(login.url)">复制授权链接</el-button></div></div></section>
       <section class="panel"><p class="eyebrow">CREDENTIALS</p><h2>凭据 JSON</h2><p class="muted">包含敏感凭据，请妥善保存。只在此编辑区展示完整内容。</p><el-input v-model="credential" type="textarea" :rows="6" aria-label="凭据 JSON" placeholder="粘贴完整凭据 JSON 或平台支持的凭据字符串" /><label class="file-label">选择 JSON 文件<input type="file" accept=".json,application/json" @change="readFile"></label><div class="actions"><el-button type="primary" :disabled="!credential.trim() || !session.keys[p]" :loading="busy.import" @click="importCredential()">导入账号</el-button><el-button :disabled="!credential" @click="download">导出 JSON</el-button><el-button :disabled="!credential" @click="credential = ''">清空</el-button></div></section></div>
     </details></template>
 
@@ -116,7 +173,7 @@ function addAccount() { tab.value = 'accounts'; connecting.value = true; setTime
         <el-table-column label="模型 ID" min-width="220"><template #default="{ row }"><code>{{ row.id }}</code></template></el-table-column>
         <el-table-column v-if="p === 'gateway'" label="可用账号" width="100" align="center"><template #default="{ row }">{{ row.availableAccounts ?? '未知' }}</template></el-table-column>
         <el-table-column v-if="p === 'gateway'" label="原始模型 ID" min-width="180"><template #default="{ row }"><code>{{ row.canonicalIds?.join(' · ') || '—' }}</code></template></el-table-column>
-        <el-table-column label="操作" width="230"><template #default="{ row }"><div class="actions"><el-button text @click="copy(row.id)">复制 ID</el-button><el-button @click="selectModel(row.id)">用于 API 示例 →</el-button></div></template></el-table-column>
+        <el-table-column label="操作" width="230"><template #default="{ row }"><div class="actions"><el-button text @click="copyModel(row.id)">复制 ID</el-button><el-button @click="selectModel(row.id)">{{ guided ? '确认模型' : '用于 API 示例 →' }}</el-button></div></template></el-table-column>
         <template #empty><el-empty description="没有可展示的模型，请刷新目录或检查搜索条件。" /></template>
       </el-table>
       <el-config-provider :locale="zhCn"><el-pagination v-model:current-page="modelPage" v-model:page-size="modelPageSize" :total="filtered.length" :page-sizes="[10, 20, 50]" :pager-count="5" layout="total, sizes, prev, pager, next" size="small" class="model-pagination" aria-label="模型目录分页" /></el-config-provider>
@@ -126,8 +183,16 @@ function addAccount() { tab.value = 'accounts'; connecting.value = true; setTime
 
     <section v-if="tab === 'quota'" class="panel"><div class="section-heading"><div><h2>额度监控</h2><p class="muted">{{ quota ? '更新于 ' + date(quota.fetchedAt) : '尚无成功刷新的数据。' }}</p></div><div class="actions"><el-checkbox v-model="auto">每 60 秒刷新</el-checkbox><el-button :loading="busy.quota" :disabled="busy.claim" @click="refreshQuota">刷新额度</el-button></div></div><el-alert v-if="errors.quota" :title="errors.quota + ' 显示上次数据，额度可能已变化。'" type="error" :closable="false" /><p class="muted">未知额度不会记作零；不同区域、单位的额度分别展示。</p><div class="quota-totals"><article v-for="group in quotaTotals" :key="group.unit"><strong>{{ group.known ? number(group.sum) : '未知' }}</strong><span>{{ group.unit }}</span><p class="muted">{{ group.known }}/{{ group.count }} 个账号有余额数据<span v-if="group.known &lt; group.count"> · 合计不含未知余额</span></p></article></div><div class="result-grid"><article v-for="a in quota?.accounts || []" :key="a.uid" class="result-card"><div class="section-heading"><h3>{{ a.nickname || a.uid }}</h3><el-tag :type="a.enabled === false ? 'info' : a.status === 'ready' ? 'success' : 'warning'">{{ a.enabled === false ? '已停用' : statusName(a.status) }}</el-tag></div><p class="muted">{{ a.region || '未知区域' }} · {{ a.uid }}<br>{{ a.plan || '套餐未知' }}</p><strong class="quota-value">{{ quotaText(a) }}</strong><p class="muted">已用 {{ number(a.used) }} · 总量 {{ number(a.limit) }}</p><p v-if="a.quotaError" class="error-text">{{ safe(a.quotaError) }}</p><p class="muted">凭据到期 {{ date(a.expiresAt) }}</p><el-progress v-if="typeof a.remaining === 'number' && typeof a.limit === 'number' && a.limit > 0" :percentage="Math.max(0, Math.min(100, Math.round(a.remaining / a.limit * 100)))" :stroke-width="5" /><p v-if="a.checkin" class="muted">签到：{{ a.checkin.enabled === false ? '无签到活动' : a.checkin.checkedIn === true ? (p === 'qoder' ? '本轮已签' : '今日已签') : a.checkin.checkedIn === false ? (p === 'qoder' ? '本轮未签' : '今日未签') : '状态未知' }}<span v-if="a.checkin.reward != null"> · 奖励 {{ a.checkin.reward }}</span></p><p v-if="a.checkin?.startsAt || a.checkin?.endsAt" class="muted">{{ date(a.checkin.startsAt) }} → {{ date(a.checkin.endsAt) }}</p><p v-if="a.checkinError" class="error-text">签到：{{ safe(a.checkinError) }}</p><details v-if="a.packages?.length" class="quota-packages"><summary>额度包明细（{{ a.packages.length }}）</summary><div v-for="(pack, index) in a.packages" :key="index"><h3>{{ pack.name || pack.type || '额度包' }}</h3><p class="muted">剩余 {{ number(pack.remaining) }} / {{ number(pack.limit) }} {{ pack.unit || a.unit }}<br>已用 {{ number(pack.used) }}<span v-if="pack.expiresAt"><br>到期 {{ date(pack.expiresAt) }}</span></p></div></details></article></div><el-empty v-if="!quota?.accounts.length" description="暂无额度快照。请连接账号后刷新。" /></section>
     <ApiGuide v-if="tab === 'guide'" ref="apiGuide" :platform="p" :models="models" :selected="selected"
-      :test-revision="testRevision" :can-confirm="!!onboarding.steps[2]?.done" :client-confirmed="clientConfirmed"
-      @test-result="handleTest" @model-changed="changeGuideModel" @confirm-client="clientConfirmed = $event" />
+      :test-revision="testRevision" :can-confirm="!!onboarding.steps[2]?.done" :client-confirmed="clientConfirmed" :guided="guided"
+      @test-result="handleTest" @model-changed="changeGuideModel" @confirm-client="confirmClient" @config-copied="configCopied" @chat-closed="chatClosed" />
     <footer class="workspace-footer">{{ names[p] }} · {{ baseURL(p) }} <span>本地管理，由你掌控</span></footer></div></main>
   </div>
 </template>
+
+<style scoped>
+.workspace-top { flex-wrap: wrap; }
+.setup-progress { flex: 0 0 100%; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 4px 16px; min-width: 0; padding-top: 8px; border-top: 1px solid var(--border); font-size: 12px; }
+.setup-progress [role='status'] { display: flex; align-items: baseline; gap: 4px 12px; flex-wrap: wrap; }
+.setup-progress strong { color: var(--accent); }
+.setup-progress-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+</style>

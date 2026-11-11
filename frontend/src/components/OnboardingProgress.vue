@@ -1,19 +1,21 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { names, platformLink, platforms } from '../modules/session'
 import type { getOnboarding, OnboardingAction } from '../modules/onboarding'
 import type { Platform } from '../types'
 
-const props = defineProps<{ platform: Platform; progress: ReturnType<typeof getOnboarding> }>()
-const emit = defineEmits<{ navigate: [action: OnboardingAction] }>()
+const props = defineProps<{ platform: Platform; progress: ReturnType<typeof getOnboarding>; clientCopied: boolean }>()
+const emit = defineEmits<{ navigate: [action: OnboardingAction]; confirmClient: [] }>()
 const current = computed(() => props.progress.steps.findIndex(step => !step.done))
+const heading = ref<HTMLElement>()
+defineExpose({ focus: () => heading.value?.focus() })
 </script>
 
 <template>
   <section class="panel onboarding" aria-labelledby="onboarding-title">
     <div class="section-heading">
       <div>
-        <h2 id="onboarding-title">首次接入</h2>
+        <h2 id="onboarding-title" ref="heading" tabindex="-1">首次接入</h2>
         <p class="muted">测试和客户端确认状态保留在当前页面会话。</p>
       </div>
       <span class="onboarding-count" role="status">已完成 {{ progress.completed }} / {{ progress.steps.length }} 步</span>
@@ -25,10 +27,14 @@ const current = computed(() => props.progress.steps.findIndex(step => !step.done
           <h3>{{ step.title }}</h3>
           <span class="step-state">{{ step.done ? '已完成' : current === index ? '当前步骤' : '待完成' }}</span>
         </div>
-        <p class="muted">{{ step.description }}</p>
+        <p class="muted">{{ step.action === 'client' && clientCopied && !step.done && !step.disabled ? '将已复制的配置粘贴到客户端，替换占位 Key。发送消息并收到回复后，在这里确认。' : step.description }}</p>
         <div v-if="step.action === 'accounts' && platform === 'gateway'" class="onboarding-actions">
-          <RouterLink v-for="item in platforms.filter(p => p !== 'gateway')" :key="item" class="text-link" :to="platformLink(item, 'accounts')" :aria-label="`管理 ${names[item]} 账号`">{{ names[item] }}</RouterLink>
+          <RouterLink v-for="item in platforms.filter(p => p !== 'gateway')" :key="item" class="text-link" :to="platformLink(item, 'accounts') + '&onboarding=gateway'" :aria-label="`管理 ${names[item]} 账号`">{{ names[item] }}</RouterLink>
         </div>
+        <template v-else-if="step.action === 'client' && clientCopied && !step.done && !step.disabled">
+          <el-button type="primary" @click="emit('confirmClient')">我已在客户端收到回复</el-button>
+          <button class="text-link" type="button" @click="emit('navigate', step.action)">{{ step.button }}</button>
+        </template>
         <el-button v-else :type="current === index ? 'primary' : 'default'" :disabled="step.disabled" @click="emit('navigate', step.action)">{{ step.button }}</el-button>
       </li>
     </ol>
@@ -36,6 +42,7 @@ const current = computed(() => props.progress.steps.findIndex(step => !step.done
 </template>
 
 <style scoped>
+#onboarding-title { scroll-margin-top: 100px; }
 .onboarding-count { color: var(--accent); font-size: 13px; white-space: nowrap; }
 .onboarding-steps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 14px 0 0; padding: 0; list-style: none; }
 .onboarding-steps li { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; min-width: 0; border: 1px solid var(--border); border-radius: 9px; padding: 12px; }

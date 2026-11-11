@@ -4,8 +4,8 @@ import { names, session } from '../modules/session'
 import { copy } from '../modules/workspace'
 import { useGuide } from '../modules/guide'
 import type { Model, Platform } from '../types'
-const props = defineProps<{ platform: Platform; models: Model[]; selected: string; testRevision: number; canConfirm: boolean; clientConfirmed: boolean }>()
-const emit = defineEmits<{ testResult: [model: string, revision: number, success: boolean]; modelChanged: [model: string]; confirmClient: [confirmed: boolean] }>()
+const props = defineProps<{ platform: Platform; models: Model[]; selected: string; testRevision: number; canConfirm: boolean; clientConfirmed: boolean; guided: boolean }>()
+const emit = defineEmits<{ testResult: [model: string, revision: number, success: boolean]; modelChanged: [model: string]; confirmClient: [confirmed: boolean]; configCopied: []; chatClosed: [] }>()
 const { model, prompt, stream, maxTokens, open, input, loading, message, bubbles, base, json, curl, send, stop, clear } = useGuide(props, (id, revision, success) => emit('testResult', id, revision, success))
 const clientHeading = ref<HTMLElement>()
 defineExpose({
@@ -15,6 +15,13 @@ defineExpose({
 })
 const log = ref<HTMLElement>()
 watch(bubbles, async () => { await nextTick(); if (log.value) log.value.scrollTop = log.value.scrollHeight }, { deep: true })
+async function copyConfig(includeStream = false) {
+  const revision = props.testRevision
+  const id = model.value
+  const text = `Base URL: ${base.value}\nAPI Key: klee-YOUR_API_KEY\nmodel: ${id}`
+  const copied = await copy(includeStream ? text + `\nstream: ${stream.value}` : text)
+  if (copied && props.guided && revision === props.testRevision && id === model.value) emit('configCopied')
+}
 </script>
 <template>
   <section class="panel"><div class="section-heading"><div><h2>API 接入指南</h2><p class="muted">OpenAI 兼容格式 · 示例使用占位 Key</p></div><el-button @click="copy(base)">复制 Base URL</el-button></div><code class="endpoint">{{ base }}</code><p class="muted">{{ platform === 'gateway' ? '应用只需配置此网关地址与网关 API Key，即可统一调用已接入的各平台模型。' : '此地址仅用于 ' + names[platform] + '，请搭配 ' + names[platform] + ' API Key。其他平台需分别配置地址与 Key，也可使用网关统一接入。' }}</p><p class="muted">模型目录：{{ base }}/models<br>对话接口：{{ base }}/chat/completions</p>
@@ -35,14 +42,25 @@ watch(bubbles, async () => { await nextTick(); if (log.value) log.value.scrollTo
     </dl>
     <p class="muted">将示例中的占位 Key 替换为已保存的实际 Key。</p>
     <div class="actions">
-      <el-button :disabled="!model" @click="copy(`Base URL: ${base}\nAPI Key: klee-YOUR_API_KEY\nmodel: ${model}`)">复制客户端配置</el-button>
+      <el-button :disabled="!model" @click="copyConfig()">复制客户端配置</el-button>
       <el-button v-if="clientConfirmed" @click="emit('confirmClient', false)">撤销客户端确认</el-button>
       <el-button v-else type="primary" :disabled="!canConfirm" @click="emit('confirmClient', true)">我已在客户端收到回复</el-button>
     </div>
     <p v-if="clientConfirmed" class="muted" role="status">已确认客户端接通。</p>
     <p v-else-if="!canConfirm" class="muted">请从模型目录选择模型，并在测试聊天中收到回复。</p>
   </section>
-  <el-dialog v-model="open" title="API 测试聊天" width="min(760px, 94vw)" :close-on-click-modal="false" destroy-on-close><p class="muted">{{ base }} · {{ model || '未选择模型' }} · Key {{ session.keys[platform] ? '已保存（隐藏）' : '未保存' }}</p><div ref="log" class="chat-log" role="log" aria-label="测试对话记录" aria-live="polite"><p v-if="!bubbles.length" class="empty">从一条消息开始测试你的配置。</p><article v-for="(bubble, index) in bubbles" :key="index" class="bubble" :class="{ user: bubble.role === '你' }"><strong>{{ bubble.role }}</strong><div>{{ bubble.content }}</div></article></div><p role="status" class="muted">{{ message }}</p><el-form @submit.prevent="send"><el-form-item label="测试消息"><el-input v-model="input" type="textarea" :rows="3" :readonly="loading" /></el-form-item><div class="actions"><el-button type="primary" native-type="submit" :loading="loading">发送</el-button><el-button :disabled="!loading" @click="stop()">停止</el-button><el-button :disabled="loading" @click="clear()">清空对话</el-button><el-button @click="copy(`Base URL: ${base}\nAPI Key: klee-YOUR_API_KEY\nmodel: ${model}\nstream: ${stream}`)">复制接入配置</el-button></div></el-form></el-dialog>
+  <el-dialog v-model="open" title="API 测试聊天" width="min(760px, 94vw)" :close-on-click-modal="false" destroy-on-close @closed="emit('chatClosed')">
+    <p class="muted">{{ base }} · {{ model || '未选择模型' }} · Key {{ session.keys[platform] ? '已保存（隐藏）' : '未保存' }}</p>
+    <div ref="log" class="chat-log" role="log" aria-label="测试对话记录" aria-live="polite"><p v-if="!bubbles.length" class="empty">从一条消息开始测试你的配置。</p><article v-for="(bubble, index) in bubbles" :key="index" class="bubble" :class="{ user: bubble.role === '你' }"><strong>{{ bubble.role }}</strong><div>{{ bubble.content }}</div></article></div>
+    <p role="status" class="muted">{{ message }}</p>
+    <el-form @submit.prevent="send">
+      <el-form-item label="测试消息"><el-input v-model="input" type="textarea" :rows="3" :readonly="loading" /></el-form-item>
+      <div class="actions"><el-button type="primary" native-type="submit" :loading="loading">发送</el-button><el-button :disabled="!loading" @click="stop()">停止</el-button><el-button :disabled="loading" @click="clear()">清空对话</el-button><el-button :disabled="guided && loading" @click="copyConfig(true)">复制接入配置</el-button></div>
+    </el-form>
+    <template v-if="guided && canConfirm && !loading" #footer>
+      <el-button type="primary" @click="open = false">返回向导，继续接入</el-button>
+    </template>
+  </el-dialog>
 </template>
 
 <style scoped>

@@ -3,6 +3,9 @@ async (page) => {
   const assert = (condition, message) => { if (!condition) throw Error(message); };
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
+  await page.addInitScript(() => Object.defineProperty(navigator, 'clipboard', { configurable: true, value: {
+    writeText: async () => { if (window.__denySetupCopy) throw new Error('clipboard denied'); },
+  } }));
   const model = 'trae/cn/demo-onboarding';
   let accounts = [], models = [], validReply = false, heldReply, requestHeld;
   await page.route('**/api/gateway/status**', route => route.fulfill({ json: { accounts, models, platforms: [], fetchedAt: Date.now() } }));
@@ -19,6 +22,7 @@ async (page) => {
   });
   await page.goto('http://127.0.0.1:18887/admin/gateway');
   const progress = page.getByRole('region', { name: '首次接入' });
+  const compact = page.getByRole('region', { name: '首次接入进度' });
   const count = steps => progress.getByText(`已完成 ${steps} / 4 步`, { exact: true }).waitFor();
   const overview = () => page.getByRole('navigation', { name: '工作空间导航' }).getByRole('button', { name: '工作台', exact: true }).click();
   const refresh = () => page.getByRole('button', { name: '刷新数据', exact: true }).click();
@@ -26,7 +30,8 @@ async (page) => {
   await count(0);
   await progress.getByRole('link', { name: '管理 Trae 账号' }).click();
   await page.getByRole('heading', { name: '账号管理', exact: true }).waitFor();
-  await page.getByRole('link', { name: '统一网关', exact: true }).click();
+  await compact.getByText('第 1 步 / 共 4 步 · 连接账号', { exact: true }).waitFor();
+  await compact.getByRole('link', { name: '返回统一网关向导' }).click();
   accounts = [{ uid: 'demo', platform: 'trae', region: 'cn', enabled: true, status: 'no_credits', remaining: 0, models: [{ id: 'demo-onboarding' }] }];
   await refresh();
   await count(1);
@@ -35,8 +40,18 @@ async (page) => {
   models = [{ id: model, availableAccounts: 1, canonicalIds: [model] }];
   await refresh();
   await progress.getByRole('button', { name: '打开模型目录' }).click();
-  await page.getByRole('row').filter({ hasText: model }).getByRole('button', { name: '用于 API 示例 →' }).click();
-  await overview();
+  await compact.getByText('已完成 1 / 4 步', { exact: true }).waitFor();
+  await compact.getByText('确认模型', { exact: true }).waitFor();
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'Progress fits mobile screens');
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  const copyModel = page.getByRole('row').filter({ hasText: model }).getByRole('button', { name: '复制 ID', exact: true });
+  await page.evaluate(() => { window.__denySetupCopy = true });
+  await copyModel.click();
+  await page.getByText('复制失败，请手动复制。', { exact: true }).waitFor();
+  await compact.getByText('已完成 1 / 4 步', { exact: true }).waitFor();
+  await page.evaluate(() => { window.__denySetupCopy = false });
+  await copyModel.click();
   await count(2);
   await progress.getByRole('button', { name: '打开测试聊天' }).click();
   const chat = page.getByRole('dialog', { name: 'API 测试聊天' });
@@ -61,19 +76,16 @@ async (page) => {
   await progress.getByRole('button', { name: '打开测试聊天' }).click();
   await chat.getByRole('button', { name: '发送', exact: true }).click();
   await chat.getByText('请求已完成。', { exact: true }).waitFor();
-  await page.keyboard.press('Escape');
+  await chat.getByRole('button', { name: '返回向导，继续接入' }).click();
   await chat.waitFor({ state: 'hidden' });
-  await overview();
   await count(3);
   await progress.getByRole('button', { name: '查看客户端配置' }).click();
   const client = page.getByRole('region', { name: '客户端配置' });
   await client.getByText('klee-YOUR_API_KEY', { exact: true }).waitFor();
   await client.getByRole('button', { name: '复制客户端配置' }).click();
-  await overview();
   await count(3);
-  await progress.getByRole('button', { name: '查看客户端配置' }).click();
-  await client.getByRole('button', { name: '我已在客户端收到回复' }).click();
-  await overview();
+  await progress.getByText(/粘贴到客户端/).waitFor();
+  await progress.getByRole('button', { name: '我已在客户端收到回复' }).click();
   await count(4);
   accounts = [{ ...accounts[0], uid: 'replacement' }];
   await refresh();
@@ -81,5 +93,5 @@ async (page) => {
   await page.setViewportSize({ width: 390, height: 844 });
   assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'Onboarding fits mobile screens');
   assert(!errors.length, errors.join('; '));
-  return 'PASS: account shortcuts, unavailable models, failed, canceled and successful tests, manual client confirmation, account change and mobile layout';
+  return 'PASS: progress on linked pages, clipboard failure and return, failed and canceled tests, next step after success, client copy and confirmation, mobile layout';
 }

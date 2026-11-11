@@ -5,7 +5,16 @@ import { post, request } from '../api/client'
 import { safe, session, storedKey } from './session'
 import type { Account, Catalog, Login, Platform, Snapshot } from '../types'
 import { mergeCheckins } from './checkin'
-export async function copy(text: string) { try { await navigator.clipboard.writeText(text); ElMessage.success('已复制。') } catch { ElMessage.error('复制失败，请手动复制。') } }
+export async function copy(text: string) {
+  try {
+    await navigator.clipboard.writeText(text)
+    ElMessage.success('已复制。')
+    return true
+  } catch {
+    ElMessage.error('复制失败，请手动复制。')
+    return false
+  }
+}
 export async function feedback(task: () => Promise<unknown>) { try { await task() } catch (e) { if (e !== 'cancel' && e !== 'close') ElMessage.error(safe(e)) } }
 /** 工作空间保存最近一次成功快照，查询失败仅更新错误；签到读取与领取严格分开。 */
 export function useWorkspace(p: Platform) {
@@ -122,18 +131,23 @@ export function useWorkspace(p: Platform) {
     if (!active || login.value?.id !== current.id || polling) return
     polling = true
     try {
-      const data = await request<{ status: string; message?: string; credential?: unknown }>(p, '/api/login/' + encodeURIComponent(current.id))
-      if (!active || login.value?.id !== current.id) return
+      const data = await request<{ status: string; message?: string; account?: Account; credential?: unknown }>(p, '/api/login/' + encodeURIComponent(current.id))
       if (!active || login.value?.id !== current.id) return
       if (data.status === 'pending') { if (current.expiresAt && Date.now() > current.expiresAt) throw new Error('登录已超时，请重新发起。'); loginTimer = setTimeout(() => void poll(current), 2000); return }
       login.value = undefined
-      if (data.status === 'ready') { if (data.credential) credential.value = JSON.stringify(data.credential, null, 2); await refreshAccounts(); ElMessage.success('登录成功，账号已导入。') }
+      if (data.status === 'ready') {
+        if (data.credential) credential.value = JSON.stringify(data.credential, null, 2)
+        const existing = data.account && accounts.value.some(a => a.uid === data.account?.uid)
+        const label = data.account?.nickname || data.account?.uid
+        await refreshAccounts()
+        ElMessage.success(label ? safe(`${existing ? '已更新账号授权' : '已连接账号'}「${label}」。`) : '登录成功，账号已导入。')
+      }
       else ElMessage.warning(safe(data.message || '登录未完成。'))
     } catch (e) { if (active) { login.value = undefined; ElMessage.error(safe(e)) } } finally { polling = false }
   }
   async function startLogin() {
     if (login.value || busy.login) return
-    const popup = window.open('about:blank', '_blank'); if (popup) popup.opener = null
+    const popup = p === 'trae' ? null : window.open('about:blank', '_blank'); if (popup) popup.opener = null
     await load('login', async () => { try {
       const data = await post<Login>(p, '/api/login', { region: p === 'trae' ? 'cn' : region.value })
       const url = new URL(data.url); if (!['https:', 'http:'].includes(url.protocol)) throw new Error('官方登录地址无效。')
