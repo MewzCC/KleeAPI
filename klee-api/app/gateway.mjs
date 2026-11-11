@@ -9,6 +9,7 @@ import { atomicWrite } from "./store.mjs";
 import { ApiError, json, readBody, upstreamFetch } from "./http.mjs";
 import { mergeCompletionUsage, parseEvents } from "./stream.mjs";
 import { createUsageLog, usageFields } from "./gateway-usage.mjs";
+import { captureConversation } from "./conversation.mjs";
 import { checkinTarget } from "./checkin.mjs";
 
 const platforms = { workbuddy: "WorkBuddy", trae: "Trae", qoder: "Qoder" };
@@ -666,6 +667,7 @@ export async function createGateway({
 
   /** 槽位持续占用到响应结束；只有平台明确确认未生成的拒绝才允许换号。 */
   async function chat(req, res, request) {
+    const conversation = captureConversation(request.messages);
     const record = {
       id: randomUUID(),
       startedAt: Date.now(),
@@ -768,6 +770,7 @@ export async function createGateway({
           }
           await relay(response, res, request, controller.signal, (data) => {
             usage = mergeCompletionUsage(usage, data);
+            conversation.observe(data);
           });
           return;
         } finally {
@@ -797,7 +800,7 @@ export async function createGateway({
       res.off("close", close);
       controllers.delete(controller);
       controller.abort();
-      usageLog.add({ ...record, durationMs: Math.round(performance.now() - started), ...usageFields(usage) });
+      usageLog.add({ ...record, durationMs: Math.round(performance.now() - started), ...usageFields(usage) }, conversation.snapshot(record.status === 'success'));
     }
   }
 
@@ -878,6 +881,12 @@ export async function createGateway({
       }
       if (req.method === "GET" && path === "/api/gateway/usage")
         return json(res, 200, usageLog.snapshot());
+      const usageDetail = path.match(/^\/api\/gateway\/usage\/([a-zA-Z0-9_-]{1,80})$/);
+      if (req.method === 'GET' && usageDetail) {
+        const detail = usageLog.detail(usageDetail[1]);
+        if (!detail) throw new ApiError('调用记录不存在或已过期', 404, 'usage_not_found');
+        return json(res, 200, detail);
+      }
       if (req.method === "POST" && path === "/api/key") {
         const body = await readBody(req, 4096);
         if (!keyPattern.test(body.apiKey) || typeof body.apiKey !== "string")

@@ -240,7 +240,7 @@ export async function createService({platform,base=root,adapter=adapters[platfor
         if(typeof input?.uid!=='string'||!input.uid||!Array.isArray(body?.messages)||!body.messages.length||!body.messages.every(m=>m&&typeof m==='object'&&!Array.isArray(m)&&typeof m.role==='string')||typeof body.model!=='string'||!body.model.trim())throw new ApiError('需要 uid、model 和有效的非空 messages 数组');
         const controller=new AbortController();req.on('aborted',()=>controller.abort());res.on('close',()=>{if(!res.writableEnded)controller.abort();});
         const timer=setTimeout(()=>controller.abort(new DOMException('Response lifetime exceeded','TimeoutError')),poolTimeoutMs);let result;
-        try{result=await pool.chat(input.uid,body,{signal:controller.signal});return await relayCompletion(result.response,res,{stream:body.stream===true,model:body.model,format:adapter.streamFormat,signal:controller.signal});}finally{clearTimeout(timer);result?.release();}
+        try{result=await pool.chat(input.uid,body,{signal:controller.signal});return await relayCompletion(result.response,res,{stream:body.stream===true,model:body.model,format:adapter.streamFormat,signal:controller.signal,finalizeUsage:result.finalizeUsage});}finally{clearTimeout(timer);result?.release();}
       }
       if(req.method==='GET'&&path==='/v1/models')return json(res,200,await models(url.searchParams.get('refresh')==='1'));
       if(req.method==='GET'&&path==='/api/monitor')return json(res,200,await monitor());

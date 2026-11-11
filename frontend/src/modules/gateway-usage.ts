@@ -20,6 +20,24 @@ export interface GatewayCall {
   outputTokens: number | null
   totalTokens: number | null
   credits: number | null
+  hasConversation?: boolean
+  estimatedCredits?: number | null
+  creditEstimate?: { amount: number; balanceBefore: number; balanceAfter: number; unit: string; measuredAt: number } | null
+}
+
+export interface ConversationMessage {
+  role: string
+  name?: string
+  index?: number
+  content: string
+  reasoning?: string
+  tools?: { name: string; arguments: string }[]
+}
+export interface ConversationLog {
+  request: ConversationMessage[]
+  response: ConversationMessage[]
+  truncated: boolean
+  complete: boolean
 }
 
 export interface GatewayUsage {
@@ -35,6 +53,8 @@ export const creditGroup = (row: GatewayCall) => platformName(row) + ' · ' + re
 export const formatUsage = (value: number | null) => value === null
   ? '未上报'
   : value.toLocaleString('zh-CN', { maximumFractionDigits: 6 })
+export const hasCreditEstimate = (row: GatewayCall) => row.credits === null && typeof row.estimatedCredits === 'number' && Number.isFinite(row.estimatedCredits)
+export const creditText = (row: GatewayCall) => row.credits !== null ? formatUsage(row.credits) : hasCreditEstimate(row) ? formatUsage(row.estimatedCredits!) + '（估算）' : '暂无数据'
 
 const dayLabel = (timestamp: number) => new Date(timestamp).toLocaleDateString('sv-SE')
 
@@ -42,6 +62,12 @@ const dayLabel = (timestamp: number) => new Date(timestamp).toLocaleDateString('
 export function summarizeUsage(records: GatewayCall[]) {
   const knownTokens = records.filter(row => row.totalTokens !== null)
   const knownCredits = records.filter(row => row.credits !== null)
+  const estimatedRows = records.filter(hasCreditEstimate)
+  const estimatedCredits = new Map<string, number>()
+  for (const row of estimatedRows) {
+    const group = creditGroup(row)
+    estimatedCredits.set(group, (estimatedCredits.get(group) ?? 0) + row.estimatedCredits!)
+  }
   const credits = new Map<string, number>()
   for (const row of knownCredits) {
     const group = creditGroup(row)
@@ -53,6 +79,8 @@ export function summarizeUsage(records: GatewayCall[]) {
     tokens: knownTokens.length ? knownTokens.reduce((sum, row) => sum + (row.totalTokens ?? 0), 0) : null,
     creditCount: knownCredits.length,
     credits,
+    estimatedCredits,
+    estimateCount: estimatedRows.length,
     latency: records.length ? Math.round(records.reduce((sum, row) => sum + row.durationMs, 0) / records.length) : null,
   }
 }
@@ -84,18 +112,18 @@ export function usageTrend(records: GatewayCall[], metric: 'calls' | 'tokens' | 
           name: callStatuses[status], type: 'bar', stack: 'calls', barMaxWidth: 30,
           data: rows.map(bucket => bucket.filter(row => row.status === status).length),
         }))
-      : [{
-          name: metric === 'tokens' ? 'Token' : '积分',
+      : (metric === 'tokens' ? ['tokens'] : ['reported', 'estimated']).map(source => ({
+          name: source === 'tokens' ? 'Token' : source === 'estimated' ? '积分（估算）' : '平台上报积分',
           type: 'bar',
           barMaxWidth: 30,
           data: rows.map(bucket => {
             const values = bucket
               .filter(row => metric !== 'credits' || creditGroup(row) === group)
-              .map(row => metric === 'tokens' ? row.totalTokens : row.credits)
+              .map(row => source === 'tokens' ? row.totalTokens : source === 'estimated' ? hasCreditEstimate(row) ? row.estimatedCredits! : null : row.credits)
               .filter((value): value is number => value !== null)
             return values.length ? values.reduce((sum, value) => sum + value, 0) : null
           }),
-        }],
+        })),
   }
 }
 

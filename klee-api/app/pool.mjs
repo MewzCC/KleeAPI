@@ -1,4 +1,5 @@
 import {ApiError} from './http.mjs';
+import {createCreditEstimator} from './credit-estimate.mjs';
 
 /** 平台进程独占账号状态；号池只缓存无凭据的模型、额度，并保留请求生命周期内的槽位。 */
 export function createPool({platform,store,adapter,fresh,clock=Date.now}){
@@ -74,9 +75,12 @@ export function createPool({platform,store,adapter,fresh,clock=Date.now}){
       if(store.get(uid).enabled===false)throw unavailable('账号已停用');
       if(!row.enabled||row.quotaError||row.modelsError||(!row.unlimited&&!(row.remaining>0))||!row.models.some(m=>m.id===request.model))throw unavailable('账号缺少所选模型的可确认通用额度或模型权限');
       if(signal?.aborted)throw new ApiError('请求已取消',499,'request_canceled');
+      const finalizeUsage=await createCreditEstimator({readQuota:()=>adapter.quota(account),unit:row.unit,signal});
+      if(signal?.aborted)throw new ApiError('请求已取消',499,'request_canceled');
+      if((versions.get(uid)||0)!==version||store.get(uid).enabled===false)throw unavailable('账号状态已变化，请刷新号池');
       dispatched=true;const response=await adapter.chat(account,request,{signal});
       if(!response.ok){await response.body?.cancel();const error=new ApiError('平台拒绝号池请求（HTTP '+response.status+'）',response.status,'upstream_http_error');if(response.status===429)error.retryable=true;throw error;}
-      return {response,release};
+      return {response,release,finalizeUsage};
     }catch(error){release();if(!dispatched&&!signal?.aborted&&error instanceof ApiError&&(error.code==='account_changed'||error.status===404))throw unavailable('账号已移出号池或授权已改变');if(error instanceof ApiError&&error.status===429)error.retryable=true;throw error;}
   }
   return {snapshot,chat,invalidate};

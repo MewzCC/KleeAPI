@@ -53,16 +53,17 @@ export function mergeCompletionUsage(previous, data) {
 }
 
 /** 将平台 SSE 统一成 OpenAI 格式，同时支持流式与完整响应，不重试请求。 */
-export async function relayCompletion(response,res,{stream=false,model,format='openai',signal}={}){
+export async function relayCompletion(response,res,{stream=false,model,format='openai',signal,finalizeUsage}={}){
   const send=value=>write(res,value,signal);
   if(!response.ok){await response.body?.cancel();throw new ApiError('上游返回 HTTP '+response.status,response.status,'upstream_http_error');}
   if(!(response.headers.get('content-type')||'').includes('text/event-stream')){
     const data=await readJSON(response,signal);
     if(data.error||!Array.isArray(data.choices))throw new ApiError('平台拒绝对话请求',502,'upstream_chat_error');
+    const usage=finalizeUsage?await finalizeUsage(mergeCompletionUsage(null,data)):mergeCompletionUsage(null,data);
+    if(usage)data.usage=usage;
     if(!stream)return json(res,200,data);
     res.writeHead(200,{'Content-Type':'text/event-stream; charset=utf-8','Cache-Control':'no-cache'});
     await send('data: '+JSON.stringify({id:data.id,object:'chat.completion.chunk',created:data.created,model:data.model||model,choices:data.choices.map(c=>({index:c.index,delta:c.message,finish_reason:c.finish_reason}))})+'\n\n');
-    const usage=mergeCompletionUsage(null,data);
     if(usage)await send('data: '+JSON.stringify({id:data.id,object:'chat.completion.chunk',created:data.created,model:data.model||model,choices:[],usage})+'\n\n');
     res.end('data: [DONE]\n\n');return;
   }
@@ -76,8 +77,10 @@ export async function relayCompletion(response,res,{stream=false,model,format='o
       if(event.event==='error'||data.error)throw new ApiError('平台对话失败'+(data.code?'（'+data.code+'）':''),502,'upstream_stream_error');
       let delta={};
       if(format==='solo'){
+        // 计费可位于结束帧或独立元数据帧；不能只读取 token_usage。
+        usage=mergeCompletionUsage(usage,data);
         if(event.event==='output'){if(typeof data.response==='string')delta.content=data.response;if(typeof data.reasoning_content==='string')delta.reasoning_content=data.reasoning_content;if(data.tool_calls)delta.tool_calls=toolDelta(data.tool_calls);}
-        if(event.event==='token_usage')usage=mergeCompletionUsage(usage,{usage:data});
+        if(event.event==='token_usage')usage=mergeCompletionUsage(usage,{usage:data.usage??data});
         if(event.event==='done'){finish=data.finish_reason||'stop';terminal=true;}
       }else{const choice=data.choices?.[0];if(choice){delta=choice.delta||choice.message||{};if(choice.finish_reason){finish=choice.finish_reason;terminal=true;}}usage=mergeCompletionUsage(usage,data);}
       if(delta.content)content+=delta.content;if(delta.reasoning_content)reasoning+=delta.reasoning_content;
@@ -86,6 +89,7 @@ export async function relayCompletion(response,res,{stream=false,model,format='o
       if(Object.keys(delta).length)await emit(delta);
     }
     if(!terminal)throw new ApiError('上游对话流提前结束',502,'incomplete_stream');
+    if(finalizeUsage)usage=await finalizeUsage(usage);
     if(stream){if(!started)await emit({});await send('data: '+JSON.stringify(chunk({},finish))+'\n\n');if(usage)await send('data: '+JSON.stringify({id,object:'chat.completion.chunk',created,model,choices:[],usage})+'\n\n');res.end('data: [DONE]\n\n');}
     else json(res,200,{id,object:'chat.completion',created,model,choices:[{index:0,message:{role:'assistant',content,...(reasoning?{reasoning_content:reasoning}:{}),...(tools.length?{tool_calls:tools.filter(Boolean)}:{})},finish_reason:finish}],...(usage?{usage}:{})});
   }catch(error){if(res.headersSent){if(!res.destroyed)res.end('data: '+JSON.stringify({error:{message:error.message,code:error.code||'upstream_stream_error'}})+'\n\n');}else throw error;}
