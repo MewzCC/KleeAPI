@@ -11,7 +11,9 @@ KleeAPI 当前实现围绕平台现有接口重新编写，后端、平台适配
 平台参考实现的 MIT 许可和来源说明保留在对应适配器目录。本项目为独立 Vue 改造版，Git 从新的初始提交开始，不包含旧仓库历史。
 便携运行时 Node.js 的许可证位于项目根目录下的 `runtime/Node-LICENSE.txt`。
 
-前端使用 Vue、Vite、TypeScript 和 Element Plus；依赖版本固定在 frontend/package-lock.json，对应许可证保留在各 npm 包中。
+前端使用 Vue、Vite、TypeScript 和 Element Plus；依赖版本固定在 frontend/package-lock.json，对应许可证保留在各 npm 包中。Windows 便携发布包将前端生产依赖的许可证收集到 `licenses/frontend/`，清单位于 `licenses/frontend/dependencies.json`。构建工具只用于打包，不随成品分发。
+
+便携包内 Node.js 原样来自固定版本的官方 Windows x64 二进制，并校验 SHA-256；来源见 `runtime/Node-SOURCE.json`，许可证见 `runtime/Node-LICENSE.txt`。Qoder 身份组件原样提取自固定版本官方 npm 包，校验 SHA-512 后仅收集程序、DLL、许可证与来源记录，不收集发布机器上的任何运行数据；许可与来源保存在 `runtime/qoder/LICENSE.txt` 和 `runtime/qoder/source.json`。
 
 ## 可莉主题素材
 

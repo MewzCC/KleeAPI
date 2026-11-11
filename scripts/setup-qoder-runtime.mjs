@@ -40,19 +40,23 @@ export function embeddedRuntime(source) {
   return binaries;
 }
 
-async function install() {
-  if (process.platform !== 'win32' || process.arch !== 'x64') throw Error('此安装命令目前仅支持 Windows x64；其他平台请安装官方 Qoder CLI');
+export async function downloadRuntimeFiles() {
   const response = await fetch(archiveURL, { signal: AbortSignal.timeout(120000), redirect: 'error' });
   if (!response.ok) throw Error(`下载 Qoder 官方包失败（HTTP ${response.status}）`);
   const archive = Buffer.from(await response.arrayBuffer());
   if (createHash('sha512').update(archive).digest('base64') !== integrity) throw Error('Qoder 官方包完整性校验失败，已停止安装');
   const tar = gunzipSync(archive, { maxOutputLength: 256 * 1024 * 1024 });
   const binaries = embeddedRuntime(tarEntry(tar, 'package/bundle/qodercli.js').toString('utf8'));
+  return { ...binaries, 'LICENSE.txt': tarEntry(tar, 'package/LICENSE'),
+    'source.json': Buffer.from(JSON.stringify({ package: '@qoder-ai/qodercli', version, archiveURL, integrity: 'sha512-' + integrity, files: Object.fromEntries(Object.entries(binaries).map(([name, bytes]) => [name, createHash('sha256').update(bytes).digest('hex')])) }, null, 2)) };
+}
+
+async function install() {
+  if (process.platform !== 'win32' || process.arch !== 'x64') throw Error('此安装命令目前仅支持 Windows x64；其他平台请安装官方 Qoder CLI');
+  const files = await downloadRuntimeFiles();
   const dir = fileURLToPath(new URL('../runtime/qoder', import.meta.url));
   await mkdir(dir, { recursive: true });
-  for (const [name, bytes] of Object.entries(binaries)) await writeFile(join(dir, name), bytes);
-  await writeFile(join(dir, 'LICENSE.txt'), tarEntry(tar, 'package/LICENSE'));
-  await writeFile(join(dir, 'source.json'), JSON.stringify({ package: '@qoder-ai/qodercli', version, archiveURL, integrity: 'sha512-' + integrity, files: Object.fromEntries(Object.entries(binaries).map(([name, bytes]) => [name, createHash('sha256').update(bytes).digest('hex')])) }, null, 2));
+  for (const [name, bytes] of Object.entries(files)) await writeFile(join(dir, name), bytes);
   console.log(`已安装 Qoder 官方身份组件 ${version}（仅保存在本机 runtime/qoder）`);
 }
 

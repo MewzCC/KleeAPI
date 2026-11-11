@@ -15,6 +15,21 @@
 - [更新和本地文件](#更新和本地文件)
 - [开发相关命令](#想改代码的话)
 
+## Windows 便携版：无需安装环境
+
+适用于 Windows 10/11 x64。到 [Releases](https://github.com/MewzCC/KleeAPI/releases) 下载 `KleeAPI-版本号-windows-x64.zip`；`Source code (zip)` 和仓库的 `Code → Download ZIP` 是源码包。发布附件上传后才会出现在 Releases；也可从成功的「Windows portable release」Actions 构建记录下载成品（需要 GitHub 登录，先解开 Actions 外层附件）。
+
+1. 对正式发布 ZIP 点击右键 →「全部解压」，选择桌面或自己的用户文件夹。
+2. 打开解压出的 `KleeAPI-版本号-windows-x64` 文件夹，双击 `Start-Manager.cmd`。
+3. 检查通过后浏览器自动打开。直接从下面的「4. 添加一个你自己的平台账号」继续操作。
+4. 使用结束，双击 `Stop-Manager.cmd`。关闭浏览器不会停止后台服务。
+
+便携版包含固定版本 Node.js LTS、编译后的页面及 Qoder 官方组件，不需要安装 Node、npm，也不需要运行下面的源码构建命令。启动不需要管理员权限；登录、签到和模型调用仍需联网。第一次启动会在本机创建全新的 Key 和账号存储。
+
+不要直接在压缩包内双击脚本。如果提示文件缺失或完整性校验失败，请重新完整解压；如果提示端口占用，先停止自己已启动的 KleeAPI，或修改 `klee-config.json` 中的端口。启动失败的窗口会保留错误提示，详细日志在 `runtime/logs/`。
+
+下面的安装 Node、安装依赖与构建步骤只适用于源码版。
+
 ## 1. 下载项目，准备好 Node.js
 
 打开 [项目仓库](https://github.com/MewzCC/KleeAPI)，点击绿色的 **Code → Download ZIP**，下载后解压到你打算长期使用的文件夹。
@@ -273,7 +288,9 @@ Windows 下账号存储的加密密钥受当前用户的 DPAPI 保护。把文�
 
 ## 更新和本地文件
 
-更新前先停止服务，再替换源码。如果你用 Git 下载，并且没有本地代码改动，可以在项目目录执行 `git pull`。接着重新安装依赖、构建和启动：
+**便携版更新：** 先双击旧目录的 `Stop-Manager.cmd`，把新版 ZIP 完整解压到一个新目录。在同一电脑、同一 Windows 用户下，把下列四个 `*-Chat/data/` 文件夹和自己的 `klee-config.json` 复制到新版的对应位置，再双击新版的启动脚本。保留旧目录作为备份，不要把旧程序或 `runtime/manager.json` 覆盖到新版。换电脑或 Windows 用户时请重新登录。
+
+**源码版更新：** 更新前先停止服务，再替换源码。如果你用 Git 下载，并且没有本地代码改动，可以在项目目录执行 `git pull`。接着重新安装依赖、构建和启动：
 
 ```powershell
 npm run setup
@@ -302,6 +319,8 @@ npm start
 | --- | --- |
 | `npm run setup` | 根据锁文件安装前端依赖 |
 | `npm run build` | 检查类型并构建正式页面 |
+| `npm run release:win` | 在 Windows x64 制作包含运行时、页面与组件许可证的便携 ZIP |
+| `npm run release:verify` | 将正式 ZIP 解压到全新的中文空格路径，在无系统 Node/npm 的环境下验证启停 |
 | `npm run dev` | 启动后端与前端开发页面，地址为 `http://127.0.0.1:15173/admin` |
 | `npm run typecheck` | 检查 TypeScript 和 Vue 类型 |
 | `npm test` | 运行使用模拟请求和临时数据的测试，不执行真实账号签到 |
@@ -312,4 +331,10 @@ npm start
 
 正式页面改完后执行 `npm run build`，刷新浏览器就能看到。后端代码改动需要重启服务。
 
-源码仓库不包含 `node_modules`、`frontend/dist` 和便携的 `node.exe`。启动脚本会优先使用本机已有的 `runtime/node.exe`，否则使用系统安装的 Node.js。自己制作便携包时，需要带上构建后的页面，并保留运行时的许可证。
+源码仓库不包含 `node_modules`、`frontend/dist` 和便携的 `node.exe`。启动脚本会优先使用本机已有的 `runtime/node.exe`，否则使用系统安装的 Node.js。
+
+`npm run release:win` 会根据锁文件安装前端构建依赖并构建，从官方固定地址下载 Node.js 24.22.2 LTS 和 Qoder 组件，通过校验后生成 `output/releases/KleeAPI-版本号-windows-x64.zip` 及同名 `.sha256`。首次打包需要联网，使用 Node.js 内置模块和 Windows 压缩能力，不需要额外安装打包工具。相同版本已有成品时拒绝覆盖，请先另存旧包或修改根 `package.json` 版本号。
+
+成品只收集程序、静态页面、教程和组件许可；配置使用全新默认值，不读取本机账号和运行数据。包内 `release.json` 记录各文件校验值，启动时验证；`klee-config.json` 允许用户修改。`licenses/frontend/` 保存前端生产依赖许可证，`runtime/Node-SOURCE.json` 和 `runtime/qoder/source.json` 记录运行时来源。
+
+GitHub Actions 的「Windows portable release」支持手动执行或推送与版本号一致的 `v版本号` 标签，构建后在无系统 Node/npm 的 PATH 下检查解压启动，再提供 ZIP 与 SHA-256 附件。工作流只上传干净成品，不上传测试启动后生成的目录，也不会自动发布 GitHub Release；发布者可将正式 ZIP 和校验文件作为 Release 附件上传。

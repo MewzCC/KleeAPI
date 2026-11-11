@@ -1,5 +1,8 @@
 KleeAPI 新版启动说明
 
+Windows x64 便携发布 ZIP：完整解压后直接双击 Start-Manager.cmd，用完双击 Stop-Manager.cmd。已内置运行时与页面，无需安装 Node、npm 或构建。不要在压缩包内直接运行。
+下面的安装与构建步骤适用于从仓库下载的源码版。维护者可运行 npm run release:win 制作便携包，成品位于 output/releases/，不会包含本机账号、Key 或聊天记录。
+
 1. 初次运行：安装 Node.js 22.12+（包含 npm），在当前目录执行 npm run setup，然后 npm run build。
 2. 双击 Start-Manager.cmd，等待自动打开 http://127.0.0.1:18887/admin。
 3. 关闭时双击 Stop-Manager.cmd；仅停止本目录管理器拥有的服务。

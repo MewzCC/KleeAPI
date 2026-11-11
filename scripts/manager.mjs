@@ -6,6 +6,7 @@ import {existsSync,mkdirSync,openSync,closeSync,readFileSync,writeFileSync,unlin
 import {join,resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {loadConfig,root} from '../klee-api/app/config.mjs';
+import {checkInstallation} from './preflight.mjs';
 
 const stateFile=join(root,'runtime','manager.json');
 const identity=resolve(root).toLowerCase();
@@ -87,6 +88,7 @@ export async function launchBrowser(url){
 export async function runManager({dev=false,browser=true,spawnProcess=spawn,checkReady=healthy,openBrowser=launchBrowser}={}){
   if(await existingManager())throw Error('本项目管理器已启动，请使用 npm run status 或 npm stop。');
   const config=loadConfig();
+  await checkInstallation({dev});
   if(dev){if(!existsSync(join(root,'frontend','node_modules','vite','bin','vite.js')))throw Error('缺少前端依赖，请先运行 npm run setup。');}
   else if(!existsSync(join(root,'frontend','dist','index.html')))throw Error('缺少 frontend/dist/index.html，请先运行 npm run setup 和 npm run build。');
   const services=serviceSpecs(config,dev);
@@ -140,7 +142,7 @@ export async function runManager({dev=false,browser=true,spawnProcess=spawn,chec
     if(stopping)throw failure??Error('启动已取消');
     state.status='ready';writeFileSync(stateFile,JSON.stringify(state,null,2),{mode:0o600});
     const url=`http://127.0.0.1:${dev?15173:config.ports.gateway}/admin`;
-    console.log('KleeAPI 已启动：'+url);console.log('停止：npm stop；状态：npm run status；日志：runtime/logs');
+    console.log('KleeAPI 已启动：'+url);console.log('停止：Stop-Manager.cmd；状态：runtime/manager.json；日志：runtime/logs');
     process.send?.({status:'ready',url});
     if(browser){try{await openBrowser(url);}catch{console.error('浏览器未自动打开，请手动打开管理地址并填写新项目 Key。');}}
     await done;if(failure)throw failure;
@@ -151,6 +153,7 @@ export async function runManager({dev=false,browser=true,spawnProcess=spawn,chec
 async function detached(dev,browser){
   const existing=await existingManager();
   if(existing){console.log('本项目管理器已运行。');if(existing.status.status==='ready'&&browser)try{await launchBrowser(`http://127.0.0.1:${existing.status.mode==='development'?15173:loadConfig().ports.gateway}/admin`);}catch{console.error('请手动打开管理页面。');}return;}
+  await checkInstallation({dev});
   mkdirSync(join(root,'runtime','logs'),{recursive:true});
   const fd=openSync(join(root,'runtime','logs','manager.log'),'a',0o600);
   let child;try{child=spawn(node,[fileURLToPath(import.meta.url),dev?'dev':'start',...(browser?[]:['--no-browser'])],{cwd:root,detached:true,windowsHide:true,stdio:['ignore',fd,fd,'ipc']});}finally{closeSync(fd);}
@@ -158,7 +161,10 @@ async function detached(dev,browser){
     const timer=setTimeout(()=>{child.send({command:'shutdown'},()=>{});reject(Error('启动超时，请查看 runtime/logs/manager.log。'));},40000);
     child.once('error',error=>{clearTimeout(timer);reject(error);});
     child.once('exit',()=>{clearTimeout(timer);reject(Error('启动失败，请查看 runtime/logs/manager.log。'));});
-    child.on('message',message=>{if(message?.status==='ready'){clearTimeout(timer);console.log('KleeAPI 已启动：'+message.url);child.disconnect();child.unref();resolve();}});
+    child.on('message',message=>{
+      if(message?.status==='ready'){clearTimeout(timer);console.log('KleeAPI 已启动：'+message.url);child.disconnect();child.unref();resolve();}
+      else if(message?.status==='failed'){clearTimeout(timer);reject(Error(message.message));}
+    });
   });
 }
 
@@ -174,4 +180,4 @@ export async function main(args=process.argv.slice(2)){
   if(args.includes('--detach'))await detached(command==='dev',!args.includes('--no-browser'));
   else await runManager({dev:command==='dev',browser:!args.includes('--no-browser')});
 }
-if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url))main().catch(error=>{console.error(error.message);process.exitCode=1;});
+if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url))main().catch(error=>{console.error(error.message);process.send?.({status:'failed',message:error.message});process.exitCode=1;});
