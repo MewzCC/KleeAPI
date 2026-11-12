@@ -73,10 +73,13 @@ export function useWorkspace(p: Platform) {
     if (busy.claim || (target !== undefined && (busy.checkins || busy.quota))) return
     await load(target === undefined ? kind : 'claim', async () => {
       const key = session.keys[p]
-      const body = typeof target === 'object' ? { uid: target.uid, ...(p === 'gateway' ? { platform: target.platform } : {}) } : { all: target, ...(platform ? { platform } : {}) }
+      const desktopOnly = p === 'trae' && target === true
+      const body = typeof target === 'object'
+        ? { uid: target.uid, ...(p === 'gateway' ? { platform: target.platform } : {}) }
+        : { all: target, ...(platform ? { platform } : {}) }
       const data = target === undefined
         ? await request<Snapshot>(p, kind === 'quota' ? '/api/monitor' : '/api/checkin')
-        : await post<Snapshot>(p, '/api/checkin', body)
+        : await post<Snapshot>(p, desktopOnly ? '/api/checkin/desktop' : '/api/checkin', body)
       if (key !== session.keys[p]) return
       if (!Array.isArray(data.accounts)) throw new Error('服务返回的账号数据无效。')
       data.fetchedAt ||= new Date().toISOString()
@@ -85,9 +88,10 @@ export function useWorkspace(p: Platform) {
         accounts.value = accounts.value.map(a => { const row = data.accounts.find(q => q.uid === a.uid); return row && !row.quotaError && Number.isFinite(row.remaining) ? { ...a, credits: row.remaining } : a })
       } else if (target === undefined) checkins.value = data
       else {
-        checkins.value = mergeCheckins(checkins.value, data, body)
+        checkins.value = mergeCheckins(checkins.value, data, { ...body, desktopOnly })
         const failures = data.accounts.filter(a => ['failed', 'pending', 'unknown'].includes(a.status || '')).length + (data.platforms?.filter(x => x.error).length || 0)
-        if (failures) ElMessage.warning('本次有未完成或待确认的签到，请查看下方结果。')
+        if (data.stopped) ElMessage.warning('本机设备今日已领取，批次已停止。')
+        else if (failures) ElMessage.warning('本次有未完成或待确认的签到，请查看下方结果。')
         else ElMessage.success('签到处理完成，结果已更新。')
       }
       errors[kind] = ''
@@ -147,7 +151,7 @@ export function useWorkspace(p: Platform) {
   }
   async function startLogin() {
     if (login.value || busy.login) return
-    const popup = p === 'trae' ? null : window.open('about:blank', '_blank'); if (popup) popup.opener = null
+    const popup = window.open('about:blank', '_blank'); if (popup) popup.opener = null
     await load('login', async () => { try {
       const data = await post<Login>(p, '/api/login', { region: p === 'trae' ? 'cn' : region.value })
       const url = new URL(data.url); if (!['https:', 'http:'].includes(url.protocol)) throw new Error('官方登录地址无效。')

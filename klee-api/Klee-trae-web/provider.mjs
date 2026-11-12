@@ -1,6 +1,6 @@
 import {randomBytes} from 'node:crypto';
 import {requestJSON, upstreamFetch, ApiError} from '../app/http.mjs';
-import {ugDeviceContext, syncDevice} from './device.mjs';
+import {ugDeviceContext, localDeviceContext, syncDevice} from './device.mjs';
 
 const AGENT = 'https://trae-api-cn.mchost.guru';
 const OAUTH = 'https://api.trae.com.cn';
@@ -21,7 +21,9 @@ function checked(data, requireCode = false) {
   if (!data || typeof data !== 'object' || Array.isArray(data)) throw new ApiError('Trae 返回了无效数据', 502, 'upstream_error');
   const code = data.code ?? data.Code;
   if ((code != null && Number(code) !== 0) || data.ResponseMetadata?.Error || data.Error) {
-    const messages = {9074:'本次签到未获平台批准，奖励未确认到账。请先在 Trae 官方客户端核对今日签到、积分明细及登录设备，再刷新状态',9095:'此设备今日已签到，当前账号未确认领取；请核对官方签到记录',1001:'登录已失效，请在账号管理中重新登录'};
+    const crowded = '当前参与用户太多，请稍后再试';
+    const checkinRejection = data.message === crowded ? crowded : '平台拒绝本次签到';
+    const messages = {9074:checkinRejection + '。奖励未确认到账',9095:'此设备今日已签到，当前账号未确认领取；请核对官方签到记录',1001:'登录已失效，请在账号管理中重新登录'};
     throw new ApiError(`Trae 拒绝请求（${text(code ?? 'error')}）：${messages[code] || '请在官方客户端核对'}`, code == 1001 ? 401 : 502, `trae_${code ?? 'error'}`);
   }
   if (requireCode && code == null) throw new ApiError('领取响应缺少业务码，请核对官方签到记录', 502, 'upstream_error');
@@ -122,7 +124,7 @@ function headers(account, kind = 'solo', stream = false) {
 async function post(host, path, account, body = {}, kind = 'solo') {
   const h = headers(account, kind);
   if (kind === 'ug') {
-    const device = await ugDeviceContext(account);
+    const device = ugDeviceContext(account);
     for (const [header, field] of [['X-Device-Id','deviceId'],['X-Device-Brand','deviceBrand'],['X-Device-Type','deviceType'],['X-Os-Version','osVersion'],['X-App-Version','appVersion']]) if (device[field]) h[header] = device[field];
     if (device.appVersion) h['User-Agent'] = `Trae/${device.appVersion}`;
   }
@@ -213,7 +215,8 @@ async function checkin(account) {
   if (![1,2].includes(reqSource)) throw new ApiError('Trae 签到请求来源无效');
   const data = await post(UG, '/trae/api/v2/ug/checkin_credits/status', account, {req_source:reqSource}, 'ug');
   if (typeof data.checked_in !== 'boolean' || typeof data.enable !== 'boolean') throw new ApiError('Trae 签到状态字段缺失', 502);
-  return {checkedIn:data.checked_in, enabled:data.enable, reward:data.credits ?? null};
+  return {checkedIn:data.checked_in, enabled:data.enable, reward:data.credits ?? null,
+    ...(typeof data.did_checked_in==='boolean'?{deviceCheckedIn:data.did_checked_in}:{})};
 }
 
 async function claim(account) {
@@ -231,7 +234,7 @@ async function startLogin({region = 'cn', callbackURL = 'http://127.0.0.1:18080/
   const callback = new URL(callbackURL);
   if (callback.origin !== 'http://127.0.0.1:18080' || callback.pathname !== '/authorize' || callback.search || callback.hash || callback.username || callback.password) throw new ApiError('Trae 登录回调必须使用本机 18080 端口');
   const machineId = randomBytes(16).toString('hex'), deviceId = randomBytes(16).toString('hex');
-  const deviceContext = await ugDeviceContext({reqSource:2, deviceId});
+  const deviceContext = await localDeviceContext({reqSource:2, deviceId});
   const state = deviceId.slice(-16);
   const url = new URL('https://www.trae.cn/authorization');
   url.search = new URLSearchParams({

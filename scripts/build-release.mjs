@@ -60,7 +60,7 @@ export async function stageRelease({ source, destination, runtimeFiles }) {
   async function copy(path, target = path) {
     await put(target, await read(path));
   }
-  for (const path of ['Start-Manager.cmd', 'Stop-Manager.cmd', 'Start-Manager.ps1', 'Stop-Manager.ps1', 'LICENSE', 'README.md',
+  for (const path of ['Start-Manager.cmd', 'Stop-Manager.cmd', 'Start-Manager.ps1', 'Stop-Manager.ps1', 'LICENSE', 'README.md', 'signin.sh',
     'scripts/manager.mjs', 'scripts/preflight.mjs', 'scripts/setup-qoder-runtime.mjs',
     'docs/TUTORIAL.md', 'docs/API-GUIDE.md', 'docs/NOTICE.md', 'docs/KLEE-THEME.md']) await copy(path);
   for (const directory of ['klee-api/app', 'klee-api/Klee-workbuddy-web', 'klee-api/Klee-trae-web', 'klee-api/Klee-qoder-web']) {
@@ -99,7 +99,7 @@ export async function stageRelease({ source, destination, runtimeFiles }) {
   await put('licenses/frontend/dependencies.json', JSON.stringify(dependencies, null, 2) + '\n');
   await put('package.json', JSON.stringify({ name: 'klee-api', version: pkg.version, private: true, type: 'module', license: 'MIT',
     scripts: { start: 'node scripts/manager.mjs start', stop: 'node scripts/manager.mjs stop', status: 'node scripts/manager.mjs status' } }, null, 2) + '\n');
-  await put('klee-config.json', JSON.stringify({ workbuddy: { port: 18791 }, trae: { port: 17864 }, qoder: { port: 17865 }, gateway: { port: 18887, aliases: {} } }, null, 2) + '\n');
+  await put('klee-config.json', JSON.stringify({ workbuddy: { port: 18791 }, trae: { port: 17864, checkinAt: '03:00' }, qoder: { port: 17865 }, gateway: { port: 18887, aliases: {} } }, null, 2) + '\n');
   await put('先看这里.txt', '\uFEFFKleeAPI Windows x64 便携版 ' + pkg.version + '\r\n\r\n'
     + '1. 右键 ZIP → 全部解压，到桌面或自己的用户文件夹。不要在压缩包里直接双击运行。\r\n'
     + '2. 双击 Start-Manager.cmd，启动检查通过后自动打开管理页面。无需安装 Node.js、npm，也无需编译。\r\n'

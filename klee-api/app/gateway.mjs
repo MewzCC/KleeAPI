@@ -333,27 +333,32 @@ export async function createGateway({
       // 聚合先于前端的 120 秒预算结束，确保其他平台已确认的结果可返回。
       const timer = setTimeout(() => controller.abort(), Math.min(requestTimeoutMs, 110000));
       try {
-        const response = await call(platform, '/api/checkin', {
+        const path = platform === 'trae' && target?.all ? '/api/checkin/pool' : '/api/checkin';
+        const response = await call(platform, path, {
           signal: controller.signal,
           ...(target ? { method: 'POST', body: JSON.stringify(target.uid ? { uid: target.uid } : { all: true }) } : {}),
         });
         if (!response.ok) {
-          await response.body?.cancel();
           failure = response.status === 409 ? '该平台正在签到，请等待后刷新状态' : '平台服务未能完成请求，请检查服务和登录状态';
+          if (path === '/api/checkin/pool' && response.status === 409) {
+            const data = await responseJSON(response, controller.signal).catch(() => null);
+            if (data?.error?.code === 'trae_device_binding_required') failure = '请先在 Trae 账号管理同步本机设备';
+          } else await response.body?.cancel();
           throw new Error(failure);
         }
         const data = await responseJSON(response, controller.signal);
         if (!Array.isArray(data?.accounts) || data.accounts.some(a => !a || typeof a.uid !== 'string')) throw new Error('平台返回的签到数据无效');
-        const fields = ['uid', 'nickname', 'region', 'enabled', 'status', 'checkedIn', 'message', 'reward', 'balanceBefore', 'balanceAfter', 'startsAt', 'endsAt', 'errorCode', 'hint'];
+        const fields = ['uid', 'nickname', 'region', 'enabled', 'status', 'desktopBound', 'checkinDeviceReady', 'checkedIn', 'deviceCheckedIn', 'message', 'reward', 'balanceBefore', 'balanceAfter', 'startsAt', 'endsAt', 'errorCode', 'hint'];
         const accounts = data.accounts.map(a => ({
           ...Object.fromEntries(fields.filter(key => ['string', 'number', 'boolean'].includes(typeof a[key]) || a[key] === null).map(key => [key, a[key]])), platform,
         }));
-        return { platform, status: 'ready', accounts };
+        return { platform, status: 'ready', accounts, ...(platform === 'trae' && data.stopped === true ? { stopped: true } : {}) };
       } catch (error) {
         return { platform, status: 'failed', error: controller.signal.aborted ? '平台响应超时；领取结果待确认，请刷新状态后核对' : failure, accounts: [] };
       } finally { if (target) snapshots.delete(platform); clearTimeout(timer); controllers.delete(controller); }
     }));
-    return { fetchedAt: Date.now(), accounts: results.flatMap(r => r.accounts), platforms: results.map(({ accounts, ...result }) => result) };
+    return { fetchedAt: Date.now(), accounts: results.flatMap(r => r.accounts), platforms: results.map(({ accounts, ...result }) => result),
+      ...(results.some(result => result.stopped) ? { stopped: true } : {}) };
   }
 
   /** 快照按平台独立过期；失败清空旧资格，避免继续使用过期的正余额。 */

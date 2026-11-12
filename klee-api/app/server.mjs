@@ -9,7 +9,7 @@ import {AccountStore,atomicWrite} from './store.mjs';
 import {ApiError,json,readBody} from './http.mjs';
 import {relayCompletion} from './stream.mjs';
 import {createPool} from './pool.mjs';
-import {checkinTarget,checkinFailure} from './checkin.mjs';
+import {checkinTarget,checkinFailure,nextTraeCheckin} from './checkin.mjs';
 import workbuddy from '../Klee-workbuddy-web/provider.mjs';
 import trae from '../Klee-trae-web/provider.mjs';
 import qoder from '../Klee-qoder-web/provider.mjs';
@@ -23,6 +23,22 @@ export async function createService({platform,base=root,adapter=adapters[platfor
   if(!adapter||!Object.hasOwn(folder,platform))throw Error('Unknown platform');
   const config=loadConfig(base),port=config.ports[platform],dir=join(base,folder[platform]+'-Chat','data',folder[platform]);
   const store=await new AccountStore({platform,dir,normalize:adapter.normalize,protectKey}).init();
+  const sharedDeviceFile=join(dir,'checkin-device.json');
+  function deviceContext(input){
+    if(!input||![1,2].includes(input.reqSource)||typeof input.deviceId!=='string'||!input.deviceId.trim()||!/^[\x20-\x7e]{1,512}$/.test(input.deviceId))return null;
+    return Object.fromEntries(deviceFields.filter(field=>field==='reqSource'||typeof input[field]==='string'&&/^[\x20-\x7e]{1,512}$/.test(input[field])).map(field=>[field,input[field]]));
+  }
+  let sharedDevice=null;
+  if(platform==='trae'){
+    try{sharedDevice=deviceContext(JSON.parse(readFileSync(sharedDeviceFile,'utf8')));}catch{}
+    sharedDevice??=deviceContext(store.state.accounts.find(account=>account.desktopBound===true));
+    if(sharedDevice)atomicWrite(sharedDeviceFile,JSON.stringify(sharedDevice));
+  }
+  const withSharedDevice=account=>{
+    const result={...account};
+    for(const field of deviceFields)delete result[field];
+    return {...result,...sharedDevice};
+  };
   const pending=new Map(),refreshing=new Map();let checking=false,modelCache=null,callbackAvailable=false;
   const pool=createPool({platform,store,adapter,fresh});
   const origins=new Set(Object.values(config.ports).flatMap(p=>['http://127.0.0.1:'+p,'http://localhost:'+p]));
@@ -69,7 +85,15 @@ export async function createService({platform,base=root,adapter=adapters[platfor
     try{return {account,data:await read(account)};}
     catch(error){if(upstreamUnauthorized(error))throw deviceReauth();throw error;}
   }
-  async function importAccount(input,accept=()=>true){const account=await adapter.normalize(input);if(!accept())throw new ApiError('登录请求已取消或过期',409,'login_canceled');if(!account?.uid||typeof account.uid!=='string'||!account.accessToken)throw new ApiError('登录 JSON 缺少有效账号或令牌');const saved=await store.save(account,true);modelCache=null;pool.invalidate(saved.uid);return {account:store.list().find(a=>a.uid===saved.uid),credential:saved};}
+  async function importAccount(input,accept=()=>true){
+    const account=await adapter.normalize(input);
+    if(!accept())throw new ApiError('登录请求已取消或过期',409,'login_canceled');
+    if(!account?.uid||typeof account.uid!=='string'||!account.accessToken)throw new ApiError('登录 JSON 缺少有效账号或令牌');
+    // 重新导入的凭据和设备信息需重新核验绑定。
+    if(platform==='trae')account.desktopBound=false;
+    const saved=await store.save(account,true);modelCache=null;pool.invalidate(saved.uid);
+    return {account:store.list().find(a=>a.uid===saved.uid),credential:saved};
+  }
 
   async function models(force){
     const account=await fresh(store.selected());
@@ -98,6 +122,7 @@ export async function createService({platform,base=root,adapter=adapters[platfor
   const checkinReads=new Map();
   /** Qoder 只共享同一凭据正在执行的查询，领取前后的复查始终直接请求上游。 */
   function readCheckin(account){
+    if(platform==='trae'&&sharedDevice)account=withSharedDevice(account);
     if(platform!=='qoder')return adapter.checkin(account);
     const key=JSON.stringify([account.uid,account.region,account.providerUid,account.deviceToken,account.accessToken]);
     if(!checkinReads.has(key)){
@@ -128,12 +153,15 @@ export async function createService({platform,base=root,adapter=adapters[platfor
   async function checkinStatus(){
     const accounts=await mapAccountReads(async summary=>{
       const row={...summary,checkedIn:null,status:'unknown',message:'签到状态尚未确认'};
+      if(platform==='trae')row.checkinDeviceReady=!!sharedDevice;
       if(!summary.enabled){row.status='skipped';row.message='账号已停用';return row;}
       try{
         const account=await fresh(store.get(summary.uid)),daily=await readCheckin(account);
         for(const key of ['reward','campaignId','startsAt','endsAt'])if(daily?.[key]!==undefined)row[key]=daily[key];
         if(typeof daily?.checkedIn==='boolean')row.checkedIn=daily.checkedIn;
+        if(typeof daily?.deviceCheckedIn==='boolean')row.deviceCheckedIn=daily.deviceCheckedIn;
         if(daily?.checkedIn===true){row.status='already';row.message=platform==='qoder'?'本轮已签到':'今日已签到';}
+        else if(platform==='trae'&&daily?.deviceCheckedIn===true){row.status='skipped';row.message='本机设备今日已领取，此账号今日未签到';}
         else if(daily?.enabled===false){row.status='no_activity';row.message='当前没有可领取的签到活动';}
         else if(daily?.enabled===true&&daily?.checkedIn===false){row.status='available';row.message=platform==='qoder'?'本轮未签到':'今日未签到';}
       }catch(error){checkinFailure(row,platform==='qoder'&&upstreamUnauthorized(error)?deviceReauth():error instanceof ApiError?error:new Error('签到状态查询失败，请稍后刷新'));}
@@ -142,32 +170,110 @@ export async function createService({platform,base=root,adapter=adapters[platfor
     return {platform,fetchedAt:Date.now(),accounts};
   }
 
-  async function checkinOne(input){
+  async function checkinOne(input,{confirmBalance=false,poolSweep=false,device=null}={}){
     const result={uid:input.uid,nickname:input.nickname,region:input.region,status:'failed',checkedIn:null,message:'签到失败',balanceBefore:null,balanceAfter:null};
     if(input.enabled===false)return {...result,status:'skipped',message:'账号已停用'};
     let account;try{
-      const initial=await fresh(input);
+      let initial=await fresh(input);
+      if(device){
+        initial={...initial};
+        for(const field of deviceFields)delete initial[field];
+        Object.assign(initial,device);
+      }
+      if(poolSweep)account=initial;
       const {account:authorized,data:before}=await readWithDeviceRecovery(initial,current=>adapter.checkin(current));
       account=authorized;
       if(typeof before.checkedIn==='boolean')result.checkedIn=before.checkedIn;
+      if(poolSweep&&typeof before.deviceCheckedIn==='boolean')result.deviceCheckedIn=before.deviceCheckedIn;
       for(const key of ['reward','campaignId','startsAt','endsAt'])if(before[key]!==undefined)result[key]=before[key];
       if(before.checkedIn){result.status='already';result.message='今日已签到';}
+      else if(poolSweep&&before.deviceCheckedIn===true){result.status='skipped';result.message='本机设备今日已领取';}
       else if(!before.enabled){result.status='no_activity';result.message='当前没有可领取的签到活动';}
+      else if(poolSweep&&(before.checkedIn!==false||before.enabled!==true)){result.status='unknown';result.message='签到状态尚未确认';}
       else{
         try{result.balanceBefore=(await adapter.quota(account)).remaining;}catch{}
         let claimError;try{await adapter.claim(account,before);}catch(error){claimError=error;}
         let after;try{after=await adapter.checkin(account,before);}catch{}
+        if(poolSweep&&typeof after?.deviceCheckedIn==='boolean')result.deviceCheckedIn=after.deviceCheckedIn;
         if(after&&(!before.campaignId||after.campaignId===before.campaignId)&&typeof after.checkedIn==='boolean')result.checkedIn=after.checkedIn;
         // 活动跨轮时只能确认原领取窗口，不能把另一活动的状态作为本次成功依据。
         if(after?.checkedIn&&(!before.campaignId||after.campaignId===before.campaignId)){result.status=claimError?'already':'claimed';result.message=claimError?'本轮已签到（复查确认）':'签到状态已确认';}
         else if(claimError){checkinFailure(result,claimError);}
         else{result.status='pending';result.message='领取请求已提交，签到结果尚未确认，请核对官方记录';}
+        if(poolSweep&&claimError?.code==='trae_9095')result.errorCode=claimError.code;
       }
-      try{result.balanceAfter=(await adapter.quota(account)).remaining;if(Number.isFinite(result.balanceAfter))await store.updateCredits(account.uid,result.balanceAfter);}catch{}
-      if(result.status==='claimed'&&result.balanceBefore!==null&&result.balanceAfter===result.balanceBefore)result.message+='，当前查询余额未变化，请核对官方积分明细';
-      else if(result.status==='claimed'&&result.balanceAfter===null)result.message+='，余额暂未能读取';
     }catch(error){checkinFailure(result,platform==='qoder'&&upstreamUnauthorized(error)?deviceReauth():error);}
-    pool.invalidate(input.uid,false);return result;
+    let recordedQuota=false;
+    if(account)try{
+      const quota=await adapter.quota(account);
+      result.balanceAfter=Number.isFinite(quota.remaining)?quota.remaining:null;
+      if(result.balanceAfter!==null){
+        if(poolSweep){
+          await store.saveRefreshed(account,{uid:account.uid,credits:result.balanceAfter});
+          pool.recordQuota(account.uid,quota);
+          recordedQuota=true;
+        }else await store.updateCredits(account.uid,result.balanceAfter);
+      }
+    }catch{result.balanceAfter=null;}
+    if(poolSweep&&result.balanceAfter===null)result.balanceError='未能确认并写回实际余额';
+    if(result.status==='claimed'&&confirmBalance){
+      const reward=Number(result.reward);
+      const matchesReward=Number.isFinite(result.balanceBefore)&&Number.isFinite(result.balanceAfter)
+        &&Number.isFinite(reward)&&reward>0&&Math.abs(result.balanceAfter-result.balanceBefore-reward)<0.000001;
+      result.message=matchesReward?'签到已确认，积分余额增加 '+reward:'签到已确认，到账金额待核对';
+    }
+    else if(result.status==='claimed'&&result.balanceBefore!==null&&result.balanceAfter===result.balanceBefore)result.message+='，当前查询余额未变化，请核对官方积分明细';
+    else if(result.status==='claimed'&&result.balanceAfter===null)result.message+='，余额暂未能读取';
+    if(!recordedQuota)pool.invalidate(input.uid,false);
+    return result;
+  }
+
+  async function sweepTraePool(accountId,targetUid){
+    if(checking)throw new ApiError('签到正在进行，请等待本次结果',409);
+    checking=true;
+    try{
+      let device=sharedDevice;
+      if(accountId!==undefined){
+        const reference=store.get(accountId);
+        device=reference.desktopBound===true?deviceContext(reference):null;
+      }
+      if(!device)throw new ApiError('请先同步一次本机设备，所有账号签到会共用此设备身份',409,'trae_device_binding_required');
+      const accounts=[];
+      let stopped=false;
+      const summaries=targetUid?[store.list().find(account=>account.uid===targetUid)]:store.list();
+      if(targetUid&&!summaries[0])throw new ApiError('账号不存在',404);
+      for(const {uid,nickname} of summaries){
+        const account=store.state.accounts.find(item=>item.uid===uid);
+        let reason;
+        if(stopped)reason='本机设备今日已领取，批次已停止';
+        else if(!account)reason='账号已删除';
+        else if(account.enabled===false)reason='账号已停用';
+        else if(typeof account.refreshToken!=='string'||!account.refreshToken.trim())reason='缺少刷新令牌';
+        if(reason){
+          accounts.push({uid,nickname,enabled:account?.enabled!==false,status:'skipped',checkedIn:null,message:reason,...(stopped?{errorCode:'trae_device_batch_stopped'}:{})});
+          continue;
+        }
+        const result=await checkinOne(structuredClone(account),{confirmBalance:true,poolSweep:true,device});
+        accounts.push({...result,enabled:true});
+        stopped=result.deviceCheckedIn===true||result.errorCode==='trae_9095';
+      }
+      return {platform,fetchedAt:Date.now(),accounts,stopped};
+    }finally{checking=false;}
+  }
+
+  let checkinTimer,scheduledCheckin;
+  function scheduleTraeCheckin(delay){
+    const at=config.trae.checkinAt;
+    if(platform!=='trae'||at===null||!server.listening)return;
+    checkinTimer=setTimeout(()=>{
+      if(checking){scheduleTraeCheckin(60000);return;}
+      scheduledCheckin=sweepTraePool().then(({accounts,stopped})=>{
+        const claimed=accounts.filter(a=>a.status==='claimed').length;
+        const skipped=accounts.filter(a=>a.status==='skipped').length;
+        const attention=accounts.filter(a=>['failed','pending','unknown'].includes(a.status)||a.balanceError).length;
+        console.log(`Trae 定时签到检查 ${accounts.length} 个账号，确认签到 ${claimed} 个，跳过 ${skipped} 个，需核对 ${attention} 个${stopped?'，本机设备今日已领取，批次已停止':''}`);
+      }).catch(error=>console.error(error instanceof ApiError?error.message:'Trae 定时签到未完成')).finally(()=>scheduleTraeCheckin());
+    },delay??Math.max(1,nextTraeCheckin(at)-Date.now())).unref();
   }
 
   function pruneLogins(){for(const [id,entry]of pending)if(Date.now()-entry.createdAt>600000)pending.delete(id);}
@@ -208,7 +314,7 @@ export async function createService({platform,base=root,adapter=adapters[platfor
       if(req.method==='GET'&&path==='/api/config')return json(res,200,{name:'KleeAPI',platform,ports:config.ports});
       if(req.method==='GET'&&path==='/health')return json(res,200,{ok:true,name:'KleeAPI',platform});
       if(!store.authorized(token(req)))throw new ApiError('API Key 无效',401,'invalid_api_key');
-      if(req.method==='GET'&&path==='/api/accounts')return json(res,200,{accounts:store.list(),activeUid:store.state.activeUid,warning:store.warning||undefined});
+      if(req.method==='GET'&&path==='/api/accounts')return json(res,200,{accounts:store.list().map(account=>platform==='trae'?{...account,checkinDeviceReady:!!sharedDevice}:account),activeUid:store.state.activeUid,warning:store.warning||undefined});
       if(req.method==='POST'&&path==='/api/key'){const body=await readBody(req,4096);store.replaceKey(body.apiKey,token(req));return json(res,200,{ok:true});}
       if(req.method==='POST'&&path==='/api/accounts/import'){const body=await readBody(req,6*1024*1024);return json(res,200,await importAccount(body.json));}
       if(req.method==='POST'&&path==='/api/accounts/desktop'){if(!adapter.desktop)throw new ApiError('此平台不支持读取桌面登录');return json(res,200,await importAccount(await adapter.desktop()));}
@@ -225,7 +331,13 @@ export async function createService({platform,base=root,adapter=adapters[platfor
           const old=store.get(uid),binding=await adapter.syncDevice(old);
           if(typeof binding?.deviceId!=='string'||!binding.deviceId||![1,2].includes(binding.reqSource))throw new ApiError('官方设备信息无效',502);
           const changes=Object.fromEntries(deviceFields.filter(key=>binding[key]!==undefined).map(key=>[key,binding[key]]));
-          await store.saveRefreshed(old,{...changes,uid});pool.invalidate(uid,false);
+          await store.saveRefreshed(old,{...changes,uid,...(platform==='trae'?{desktopBound:true}:{})});pool.invalidate(uid,false);
+          if(platform==='trae'){
+            const context=deviceContext(binding);
+            if(!context)throw new ApiError('本机设备信息无效',502);
+            atomicWrite(sharedDeviceFile,JSON.stringify(context));
+            sharedDevice=context;
+          }
           return json(res,200,{ok:true,account:store.list().find(a=>a.uid===uid)});
           }finally{checking=false;}
         }
@@ -245,9 +357,25 @@ export async function createService({platform,base=root,adapter=adapters[platfor
       if(req.method==='GET'&&path==='/v1/models')return json(res,200,await models(url.searchParams.get('refresh')==='1'));
       if(req.method==='GET'&&path==='/api/monitor')return json(res,200,await monitor());
       if(req.method==='GET'&&path==='/api/checkin')return json(res,200,await checkinStatus());
+      const desktopBatch=platform==='trae'&&path==='/api/checkin/desktop';
+      if(req.method==='POST'&&platform==='trae'&&(path==='/api/checkin/pool'||desktopBatch)){
+        const body=checkinTarget(await readBody(req,4096));
+        if((desktopBatch&&body.all!==true)||body.uid!==undefined
+          ||(body.accountId!==undefined&&(typeof body.accountId!=='string'||!body.accountId.trim()||body.accountId.length>512)))
+          throw new ApiError('请选择批量签到或提供有效的设备参考账号 ID',400,'invalid_checkin_target');
+        return json(res,200,await sweepTraePool(body.accountId));
+      }
       if(req.method==='POST'&&path==='/api/checkin'){
-        if(checking)throw new ApiError('签到正在进行，请等待本次结果',409);checking=true;
-        try{const body=checkinTarget(await readBody(req,4096)),accounts=body.all?store.state.accounts.map(a=>structuredClone(a)):[body.uid?store.get(body.uid):store.selected()];const results=await mapAccounts(accounts,checkinOne);return json(res,200,{platform,fetchedAt:Date.now(),accounts:results});}finally{checking=false;}
+        if(checking)throw new ApiError('签到正在进行，请等待本次结果',409);
+        const body=checkinTarget(await readBody(req,4096));
+        if(platform==='trae')return json(res,200,await sweepTraePool(undefined,body.all===true?undefined:body.uid||store.selected().uid));
+        if(checking)throw new ApiError('签到正在进行，请等待本次结果',409);
+        checking=true;
+        try{
+          const accounts=body.all?store.state.accounts.map(a=>structuredClone(a)):[body.uid?store.get(body.uid):store.selected()];
+          const results=await mapAccounts(accounts,checkinOne);
+          return json(res,200,{platform,fetchedAt:Date.now(),accounts:results});
+        }finally{checking=false;}
       }
       if(req.method==='POST'&&path==='/api/login'){
         pruneLogins();if(platform==='trae'&&!callbackAvailable)throw new ApiError('登录回调端口 18080 被占用，请先释放该端口或手动导入 JSON',503);
@@ -269,7 +397,18 @@ export async function createService({platform,base=root,adapter=adapters[platfor
   });
   server.requestTimeout=120000;server.headersTimeout=15000;
   const callbackServer=platform==='trae'&&callback?createServer((req,res)=>{if(req.url?.startsWith('/authorize?'))authorize(req,res).catch(()=>res.end('登录失败，请重新登录'));else{res.writeHead(404);res.end();}}):null;
-  return {server,store,config,pool,async listen(){if(callbackServer){try{await listen(callbackServer,18080);callbackAvailable=true;}catch{callbackAvailable=false;}}try{await listen(server,port);}catch(error){if(callbackServer?.listening)callbackServer.close();throw error;}},async close(){await Promise.all([server,callbackServer].filter(s=>s?.listening).map(s=>new Promise(r=>{s.closeAllConnections();s.close(r);})));}};
+  return {server,store,config,pool,
+    async listen(){
+      if(callbackServer){try{await listen(callbackServer,18080);callbackAvailable=true;}catch{callbackAvailable=false;}}
+      try{await listen(server,port);}catch(error){if(callbackServer?.listening)callbackServer.close();throw error;}
+      scheduleTraeCheckin();
+    },
+    async close(){
+      clearTimeout(checkinTimer);
+      await Promise.all([server,callbackServer].filter(s=>s?.listening).map(s=>new Promise(r=>{s.closeAllConnections();s.close(r);})));
+      await scheduledCheckin;
+    },
+  };
 }
 
 function listen(server,port){return new Promise((resolve,reject)=>{server.once('error',reject);server.listen(port,'127.0.0.1',()=>{server.off('error',reject);resolve();});});}

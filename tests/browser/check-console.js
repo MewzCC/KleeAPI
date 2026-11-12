@@ -7,7 +7,8 @@ async (page) => {
   const trae = page.locator('.checkin-row').filter({ has: page.getByRole('heading', { name: 'Trae 主账号', exact: true }) });
   await trae.getByRole('button', { name: '领取奖励' }).click();
   await trae.getByText('Trae 拒绝请求（9074）', { exact: false }).waitFor();
-  assert((await trae.innerText()).includes('官方客户端'), '9074 must offer actionable guidance');
+  assert((await trae.innerText()).includes('当前参与用户太多'), '9074 must show the confirmed upstream message');
+  assert(await trae.getByRole('link', { name: /管理账号/ }).count() === 0, '9074 must not suggest changing account settings');
   assert(await page.locator('.checkin-row').count() === 6, 'Same UID across platforms must not collapse rows');
   assert(posts.length === 1 && posts[0].uid === 'shared-user' && posts[0].platform === 'trae', 'Single claim must target Trae and uid');
   await page.getByRole('button', { name: '全部账号签到', exact: true }).click();

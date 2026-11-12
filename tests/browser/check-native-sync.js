@@ -1,13 +1,32 @@
 async (page) => {
   await page.goto('http://127.0.0.1:17864/admin/trae?tab=accounts#theme=default');
   await page.getByRole('heading', { name: /^Trae 主账号/ }).waitFor();
+  await page.getByRole('button', { name: '签到中心', exact: true }).click();
+  await page.getByRole('link', { name: /前往同步设备/ }).click();
+  await page.getByRole('heading', { name: /^Trae 主账号/ }).waitFor();
+  await page.getByRole('button', { name: '继续添加账号', exact: true }).click();
+  await page.getByRole('link', { name: /下载官方客户端/ }).waitFor();
   const posts = [];
   page.on('request', req => { if (req.method() === 'POST') posts.push(new URL(req.url()).pathname); });
   const response = page.waitForResponse(res => new URL(res.url()).pathname.endsWith('/shared-user/device'));
   await page.getByRole('button', { name: '同步本机设备', exact: true }).first().click();
   if ((await response).status() !== 200) throw Error('Native device sync UI did not reach the endpoint');
   await page.getByText('账号已更新。', { exact: true }).waitFor();
+  await page.getByText('共用本机设备', { exact: true }).waitFor();
   if (posts.length !== 1 || posts[0] !== '/api/accounts/shared-user/device') throw Error('Device sync must not trigger a claim');
   if (await page.getByRole('textbox', { name: '凭据 JSON' }).inputValue()) throw Error('Sync must not fill the credential editor');
-  return 'PASS: Trae native device button uses the targeted endpoint without claiming or exposing credentials.';
+  await page.getByRole('button', { name: '签到中心', exact: true }).click();
+  const batch = page.waitForRequest(req => req.method() === 'POST' && new URL(req.url()).pathname === '/api/checkin/desktop');
+  await page.getByRole('button', { name: '本机设备一键签到', exact: true }).click();
+  const body = (await batch).postDataJSON();
+  if (body.all !== true) throw Error('Batch check-in did not select all accounts');
+  await page.getByText(/Trae 拒绝请求（9074）/).waitFor();
+  await page.getByRole('button', { name: '账号管理', exact: true }).click();
+  const opened = page.context().waitForEvent('page');
+  await page.getByRole('button', { name: '官方登录', exact: true }).click();
+  const popup = await opened;
+  await popup.waitForURL('https://www.trae.cn/authorization?login_trace_id=offline-test');
+  await popup.close();
+  await page.getByRole('button', { name: '取消登录', exact: true }).click();
+  return 'PASS: Shared device batch and automatic official authorization popup work.';
 }

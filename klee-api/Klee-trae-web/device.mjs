@@ -40,13 +40,15 @@ export async function registeredDevice(reqSource, uid, appData = process.env.APP
   }
 }
 
-export async function ugDeviceContext(account) {
-  const local = await localSystem();
-  const reqSource = account.reqSource ?? 2;
-  const native = await registeredDevice(reqSource, account.uid);
-  const result = { deviceId: native || account.deviceId, deviceBrand: native ? local.deviceBrand : account.deviceBrand || local.deviceBrand, deviceType: native ? local.deviceType : account.deviceType || local.deviceType, osVersion: native ? local.osVersion : account.osVersion || local.osVersion, appVersion: native ? local.versions[reqSource] : account.appVersion || local.versions[reqSource] };
+export function ugDeviceContext({ deviceId, deviceBrand, deviceType, osVersion, appVersion }) {
+  const result = { deviceId, deviceBrand, deviceType, osVersion, appVersion };
   for (const key of Object.keys(result)) if (typeof result[key] !== 'string' || !/^[\x20-\x7e]{1,512}$/.test(result[key])) delete result[key];
   return result;
+}
+
+export async function localDeviceContext({ reqSource, deviceId }) {
+  const { deviceBrand, deviceType, osVersion, versions } = await localSystem();
+  return ugDeviceContext({ deviceId, deviceBrand, deviceType, osVersion, appVersion: versions[reqSource] });
 }
 
 /** 仅显式同步操作跨来源查找；使用实际登录客户端的来源，不进行失败后的来源轮询。 */
@@ -61,5 +63,5 @@ export async function findRegisteredContext(account, appData) {
 export async function syncDevice(account) {
   const binding = await findRegisteredContext(account);
   if (!binding) throw new ApiError('未确认此账号的本机官方设备，请在 Trae CN 或 TraeWork 登录同一账号后同步',409,'trae_native_device_unavailable');
-  return { ...await ugDeviceContext({ uid: account.uid, ...binding }), ...binding };
+  return { ...await localDeviceContext(binding), ...binding };
 }

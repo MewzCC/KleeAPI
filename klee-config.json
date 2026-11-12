@@ -1,6 +1,6 @@
 {
   "workbuddy": { "port": 18791 },
-  "trae": { "port": 17864 },
+  "trae": { "port": 17864, "checkinAt": "03:00" },
   "qoder": { "port": 17865 },
   "gateway": { "port": 18887, "aliases": {} }
 }

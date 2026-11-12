@@ -19,5 +19,7 @@ export function loadConfig(base=root){
     if(!name.trim()||name.length>256||!Array.isArray(targets)||!targets.length||targets.some(target=>typeof target!=='string'||!target.trim()||target.length>1024))throw Error('gateway.aliases 的每个别名必须指向非空模型 ID 数组');
     aliases[name]=[...new Set(targets)];
   }
-  return {ports,callbackPort:18080,gateway:{aliases}};
+  const checkinAt=input.trae?.checkinAt??null;
+  if(checkinAt!==null&&(typeof checkinAt!=='string'||!/^([01]\d|2[0-3]):[0-5]\d$/.test(checkinAt)))throw Error('trae.checkinAt 必须为北京时间 HH:MM 或 null');
+  return {ports,callbackPort:18080,gateway:{aliases},trae:{checkinAt}};
 }

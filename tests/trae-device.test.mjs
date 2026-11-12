@@ -21,6 +21,37 @@ test('Trae checkin sends the official UG device context without replacing the sa
   assert.equal(account.deviceId, 'saved-device');
 });
 
+test('Trae status and claim use the saved identity even when the host has another device for that account', async t => {
+  const appData = await mkdtemp(join(tmpdir(), 'klee-trae-headless-'));
+  const previousAppData = process.env.APPDATA;
+  process.env.APPDATA = appData;
+  t.after(async () => {
+    if (previousAppData === undefined) delete process.env.APPDATA;
+    else process.env.APPDATA = previousAppData;
+    await rm(appData, { recursive: true, force: true });
+  });
+  const profile = join(appData, 'Trae CN');
+  await mkdir(join(profile, 'User', 'globalStorage'), { recursive: true });
+  await mkdir(join(profile, 'logs', '20261110T120000'), { recursive: true });
+  await writeFile(join(profile, 'User', 'globalStorage', 'storage.json'), JSON.stringify({ 'iCubeAuthInfo://icube.cloudide': { userId: 'test-user', account: {} } }));
+  await writeFile(join(profile, 'logs', '20261110T120000', 'main.log'), '[ICDRS] (init) resolve rdid: 1234567890123456789');
+  const account = { uid: 'test-user', accessToken: 'fake-token', deviceId: 'saved-device', reqSource: 1 };
+  assert.equal(await registeredDevice(account.reqSource, account.uid), '1234567890123456789');
+
+  const requests = [];
+  t.mock.method(globalThis, 'fetch', async (url, init) => {
+    assert.equal(init.headers['X-Device-Id'], 'saved-device');
+    assert.deepEqual(JSON.parse(init.body), { req_source: 1 });
+    const endpoint = new URL(url).pathname.split('/').at(-1);
+    requests.push(endpoint);
+    return Response.json({ code: 0, enable: true, checked_in: requests.includes('claim') });
+  });
+  assert.equal((await trae.checkin(account)).checkedIn, false);
+  assert.equal((await trae.claim(account)).claimed, true);
+  assert.equal((await trae.checkin(account)).checkedIn, true);
+  assert.deepEqual(requests, ['status', 'claim', 'status']);
+});
+
 test('imported official device fields survive normalization', async () => {
   const account = await trae.normalize({ uid: 'test-user', accessToken: 'fake-token', device_id: 'saved-device', req_source: 1, x_device_brand: 'Test model', x_device_type: 'windows', x_os_version: 'Windows 11', x_app_version: '3.4.15' });
   assert.equal(account.deviceBrand, 'Test model');

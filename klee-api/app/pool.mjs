@@ -15,6 +15,25 @@ export function createPool({platform,store,adapter,fresh,clock=Date.now}){
   }
   function empty(summary){return {uid:summary.uid,nickname:summary.nickname||summary.uid,region:summary.region||'cn',enabled:summary.enabled!==false,status:'unknown',remaining:null,limit:null,used:null,unlimited:false,unit:unit(summary.region),quotaAt:0,modelsAt:0,models:[],quotaError:null,modelsError:null,inFlight:busy.has(summary.uid)?1:0};}
 
+  function applyQuota(row,quota){
+    row.remaining=Number.isFinite(quota.remaining)?quota.remaining:null;
+    row.limit=Number.isFinite(quota.limit)&&quota.limit>=0?quota.limit:null;
+    row.used=Number.isFinite(quota.used)&&quota.used>=0?quota.used:null;
+    row.unlimited=quota.unlimited===true;
+    row.unit=typeof quota.unit==='string'&&quota.unit?quota.unit:unit(row.region);
+    row.quotaAt=clock();
+    row.quotaError=row.remaining===null&&!row.unlimited?'平台未能确认通用可用额度':null;
+  }
+
+  function recordQuota(uid,quota){
+    const summary=store.list().find(account=>account.uid===uid);
+    if(!summary||summary.enabled===false)return;
+    const row={...empty(summary),...cache.get(uid)};
+    invalidate(uid,false);
+    applyQuota(row,quota);
+    cache.set(uid,row);
+  }
+
   /** 按账号合并同时到来的目录和额度查询，过期查询失败时不继续投放旧的正余额。 */
   async function metadata(uid,force=false){
     const summary=store.list().find(a=>a.uid===uid);
@@ -31,12 +50,7 @@ export function createPool({platform,store,adapter,fresh,clock=Date.now}){
       const now=clock(),needsQuota=force||!row.quotaAt||now-row.quotaAt>=60000,needsModels=force||!row.modelsAt||now-row.modelsAt>=300000;
       await Promise.all([
         needsQuota?(async()=>{try{
-          const quota=await adapter.quota(account);
-          row.remaining=typeof quota.remaining==='number'&&Number.isFinite(quota.remaining)?quota.remaining:null;
-          row.limit=Number.isFinite(quota.limit)&&quota.limit>=0?quota.limit:null;
-          row.used=Number.isFinite(quota.used)&&quota.used>=0?quota.used:null;
-          row.unlimited=quota.unlimited===true;row.unit=typeof quota.unit==='string'&&quota.unit?quota.unit:unit(row.region);
-          row.quotaAt=clock();row.quotaError=row.remaining===null&&!row.unlimited?'平台未能确认通用可用额度':null;
+          applyQuota(row,await adapter.quota(account));
         }catch(error){row.remaining=null;row.limit=null;row.used=null;row.unlimited=false;row.quotaAt=0;row.quotaError=safeError(error,'额度查询失败');}})():null,
         needsModels?(async()=>{try{
           const models=await adapter.models(account);
@@ -83,5 +97,5 @@ export function createPool({platform,store,adapter,fresh,clock=Date.now}){
       return {response,release,finalizeUsage};
     }catch(error){release();if(!dispatched&&!signal?.aborted&&error instanceof ApiError&&(error.code==='account_changed'||error.status===404))throw unavailable('账号已移出号池或授权已改变');if(error instanceof ApiError&&error.status===429)error.retryable=true;throw error;}
   }
-  return {snapshot,chat,invalidate};
+  return {snapshot,chat,invalidate,recordQuota};
 }

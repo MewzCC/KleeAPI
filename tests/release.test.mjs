@@ -16,7 +16,7 @@ async function fixture(t) {
     await writeFile(join(source, path), content);
   }
   for (const file of ['Start-Manager.cmd', 'Stop-Manager.cmd', 'Start-Manager.ps1', 'Stop-Manager.ps1',
-    'LICENSE', 'README.md', 'scripts/manager.mjs', 'scripts/preflight.mjs', 'scripts/setup-qoder-runtime.mjs',
+    'LICENSE', 'README.md', 'signin.sh', 'scripts/manager.mjs', 'scripts/preflight.mjs', 'scripts/setup-qoder-runtime.mjs',
     'klee-api/app/server.mjs', 'klee-api/app/gateway.mjs', 'klee-api/app/config.mjs',
     'klee-api/Klee-workbuddy-web/provider.mjs', 'klee-api/Klee-workbuddy-web/LICENSE',
     'klee-api/Klee-trae-web/provider.mjs', 'klee-api/Klee-trae-web/LICENSE',
