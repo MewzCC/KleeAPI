@@ -42,7 +42,7 @@ WorkBuddy、Trae、Qoder 各自的页面负责管理对应平台的登录、账�
 | 第一次安装、启动，或者连接自己的客户端 | [使用教程](docs/TUTORIAL.md) |
 | 找启动失败、Key 无效、模型不可用等问题的处理办法 | [教程中的常见问题](docs/TUTORIAL.md#遇到问题时) |
 | 查看地址、认证方式、请求参数和 PowerShell / curl 示例 | [API 接入指南](docs/API-GUIDE.md) |
-| 了解可莉主题、装饰动效和素材来源 | [主题说明](docs/KLEE-THEME.md) |
+| 查看可莉主题的素材来源 | [第三方声明](docs/NOTICE.md) |
 | 查看参考项目与第三方许可 | [来源与声明](docs/NOTICE.md) |
 
 ## 运行环境和数据

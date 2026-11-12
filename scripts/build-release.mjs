@@ -62,7 +62,7 @@ export async function stageRelease({ source, destination, runtimeFiles }) {
   }
   for (const path of ['Start-Manager.cmd', 'Stop-Manager.cmd', 'Start-Manager.ps1', 'Stop-Manager.ps1', 'LICENSE', 'README.md', 'signin.sh',
     'scripts/manager.mjs', 'scripts/preflight.mjs', 'scripts/setup-qoder-runtime.mjs',
-    'docs/TUTORIAL.md', 'docs/API-GUIDE.md', 'docs/NOTICE.md', 'docs/KLEE-THEME.md']) await copy(path);
+    'docs/TUTORIAL.md', 'docs/API-GUIDE.md', 'docs/NOTICE.md']) await copy(path);
   for (const directory of ['klee-api/app', 'klee-api/Klee-workbuddy-web', 'klee-api/Klee-trae-web', 'klee-api/Klee-qoder-web']) {
     for (const path of await filesUnder(source, directory)) {
       if (extname(path) === '.mjs' || ['LICENSE', 'NOTICE.md'].includes(basename(path))) await copy(path);

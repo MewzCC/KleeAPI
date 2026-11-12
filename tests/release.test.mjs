@@ -21,7 +21,7 @@ async function fixture(t) {
     'klee-api/Klee-workbuddy-web/provider.mjs', 'klee-api/Klee-workbuddy-web/LICENSE',
     'klee-api/Klee-trae-web/provider.mjs', 'klee-api/Klee-trae-web/LICENSE',
     'klee-api/Klee-qoder-web/provider.mjs', 'klee-api/Klee-qoder-web/NOTICE.md',
-    'docs/TUTORIAL.md', 'docs/API-GUIDE.md', 'docs/NOTICE.md', 'docs/KLEE-THEME.md']) await put(file);
+    'docs/TUTORIAL.md', 'docs/API-GUIDE.md', 'docs/NOTICE.md']) await put(file);
   await put('package.json', JSON.stringify({ name: 'klee-api', version: '1.0.0', type: 'module' }));
   await put('frontend/dist/index.html', '<script type="module" src="/assets/app.js"></script>');
   await put('frontend/dist/assets/app.js', 'console.log("fixture")');

@@ -1,6 +1,6 @@
 {
   "name": "klee-api-frontend",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "type": "module",
   "scripts": { "dev": "vite", "typecheck": "vue-tsc --noEmit", "build": "vue-tsc --noEmit && vite build" },
