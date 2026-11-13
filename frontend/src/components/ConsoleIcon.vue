@@ -8,6 +8,7 @@ const paths: Record<string, string> = {
   checkin: 'M8 2v4 M16 2v4 M3 10h18 M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2 M8 16l3 3 5-6',
   quota: 'M3 20h18 M6 16V9 M12 16V4 M18 16v-5',
   usage: 'M4 19h16 M4 14l5-5 4 3 7-8 M16 4h4v4',
+  'auto-models': 'M4 5h5v5H4z M15 14h5v5h-5z M6.5 10v7h8.5 M9 7.5h8.5V14 M14 5l3.5 2.5L14 10',
   guide: 'm8 7-5 5 5 5 M16 7l5 5-5 5 M14 4l-4 16',
   settings: 'M4 7h16 M4 17h16 M8 4v6 M16 14v6',
   arrow: 'M5 12h14 M13 6l6 6-6 6',

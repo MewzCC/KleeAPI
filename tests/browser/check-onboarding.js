@@ -100,8 +100,25 @@ async (page) => {
   await client.getByRole('button', { name: '复制客户端配置' }).click();
   await count(4);
   await progress.getByText(/粘贴到客户端/).waitFor();
+  const observer = await page.context().newPage();
+  await observer.goto('http://127.0.0.1:18791/admin/workbuddy');
+  await observer.getByRole('region', { name: '首次接入' }).getByRole('list').waitFor();
+  await page.bringToFront();
+  let denyCompletion = true;
+  await page.route('**/api/onboarding', route => denyCompletion
+    ? route.fulfill({ status: 503, json: { error: { message: '模拟保存失败' } } }) : route.fallback());
   await progress.getByRole('button', { name: '我已在客户端收到回复' }).click();
-  await count(5);
+  await page.getByText('模拟保存失败', { exact: true }).waitFor();
+  await count(4);
+  denyCompletion = false;
+  await progress.getByRole('button', { name: '我已在客户端收到回复' }).click();
+  await progress.getByText('首次接入已完成', { exact: true }).waitFor();
+  await observer.bringToFront();
+  await observer.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await observer.getByRole('region', { name: '首次接入' }).getByText('首次接入已完成', { exact: true }).waitFor();
+  await observer.getByRole('region', { name: '首次接入' }).getByRole('list').waitFor({ state: 'hidden' });
+  await observer.close();
+  await page.bringToFront();
   const stepsList = progress.getByRole('list');
   await stepsList.waitFor({ state: 'hidden' });
   const expand = progress.getByRole('button', { name: '展开步骤' });
@@ -112,10 +129,25 @@ async (page) => {
   await stepsList.waitFor({ state: 'hidden' });
   accounts = [{ ...accounts[0], uid: 'replacement' }];
   await refresh();
-  await count(3);
-  await stepsList.waitFor();
+  await progress.getByText('首次接入已完成', { exact: true }).waitFor();
+  await stepsList.waitFor({ state: 'hidden' });
+  await expand.click();
+  await progress.getByText(/当前平台的实际状态/).waitFor();
+  await progress.getByRole('button', { name: '打开测试聊天', exact: true }).waitFor();
+  await progress.getByRole('button', { name: '收起步骤', exact: true }).click();
+  await page.reload();
+  await progress.getByText('首次接入已完成', { exact: true }).waitFor();
+  await stepsList.waitFor({ state: 'hidden' });
+  for (const [platform, port] of [['workbuddy', 18791], ['trae', 17864], ['qoder', 17865]]) {
+    await page.goto(`http://127.0.0.1:${port}/admin/${platform}`);
+    await progress.getByText('首次接入已完成', { exact: true }).waitFor();
+    await stepsList.waitFor({ state: 'hidden' });
+    await progress.getByRole('button', { name: '展开步骤' }).click();
+    await progress.getByText(/已在统一网关完成首次接入/).waitFor();
+    await progress.getByRole('button', { name: '收起步骤' }).click();
+  }
   await page.setViewportSize({ width: 390, height: 844 });
   assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'Onboarding fits mobile screens');
   assert(!errors.length, errors.join('; '));
-  return 'PASS: progress on linked pages, clipboard failure and return, failed and canceled tests, next step after success, client copy and confirmation, mobile layout';
+  return 'PASS: guided setup, failed save recovery, live cross-tab completion, all platforms collapse, refresh persistence and manual expansion with real platform state';
 }

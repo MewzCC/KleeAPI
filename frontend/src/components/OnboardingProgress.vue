@@ -3,11 +3,12 @@ import { computed, nextTick, ref, watch } from 'vue'
 import { names, platformLink, platforms } from '../modules/session'
 import type { getOnboarding, OnboardingAction } from '../modules/onboarding'
 import type { Platform } from '../types'
+import { onboardingCompletion } from '../modules/onboarding-sync'
 
 const props = defineProps<{ platform: Platform; progress: ReturnType<typeof getOnboarding>; clientCopied: boolean }>()
 const emit = defineEmits<{ navigate: [action: OnboardingAction]; confirmClient: [] }>()
 const current = computed(() => props.progress.steps.findIndex(step => !step.done))
-const finished = computed(() => current.value === -1)
+const finished = computed(() => onboardingCompletion.value.completed || current.value === -1)
 const expanded = ref(false)
 const heading = ref<HTMLElement>()
 const stepsList = ref<HTMLOListElement>()
@@ -24,10 +25,10 @@ defineExpose({ focus: () => heading.value?.focus() })
     <div class="section-heading">
       <div>
         <h2 id="onboarding-title" ref="heading" tabindex="-1">首次接入</h2>
-        <p v-if="!finished || expanded" class="muted">测试和客户端确认状态保留在当前页面会话。</p>
+        <p v-if="!finished || expanded" class="muted">{{ onboardingCompletion.completed ? `已在${names[onboardingCompletion.platform || platform]}完成首次接入，所有平台已同步。以下为当前平台的实际状态。` : '任一平台完成首次接入后，所有平台会同步收起引导。' }}</p>
       </div>
       <div class="onboarding-summary">
-        <span class="onboarding-count" role="status">已完成 {{ progress.completed }} / {{ progress.steps.length }} 步</span>
+        <span class="onboarding-count" role="status">{{ finished ? '首次接入已完成' : `已完成 ${progress.completed} / ${progress.steps.length} 步` }}</span>
         <button v-if="finished" ref="toggle" class="text-link" type="button" :aria-expanded="expanded" aria-controls="onboarding-steps" @click="expanded = !expanded">{{ expanded ? '收起步骤' : '展开步骤' }}</button>
       </div>
     </div>

@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { onMounted, onUnmounted } from 'vue'
+import { syncOnboardingCompletion } from './modules/onboarding-sync'
 import { initialize, session } from './modules/session'
 import KleeCompanion from './components/KleeCompanion.vue'
 import KleeDecorations from './components/KleeDecorations.vue'
@@ -7,6 +8,9 @@ import ThemeToggle from './components/ThemeToggle.vue'
 import ScrollHint from './components/ScrollHint.vue'
 import { kleeTheme } from './modules/decoration'
 onMounted(initialize)
+let stopOnboardingSync: (() => void) | undefined
+onMounted(() => { stopOnboardingSync = syncOnboardingCompletion() })
+onUnmounted(() => stopOnboardingSync?.())
 </script>
 <template>
   <div v-if="session.error" class="boot"><h1>KleeAPI</h1><el-alert :title="session.error" type="error" :closable="false" /><el-button @click="initialize">重新连接</el-button></div>

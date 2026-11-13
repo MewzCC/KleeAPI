@@ -1,4 +1,5 @@
 import {serveFrontend} from './web.mjs';
+import {readOnboarding,saveOnboarding} from './onboarding.mjs';
 import {createServer} from 'node:http';
 import {readFileSync,existsSync} from 'node:fs';
 import {join,resolve} from 'node:path';
@@ -311,9 +312,10 @@ export async function createService({platform,base=root,adapter=adapters[platfor
         if(target!==platform){res.writeHead(302,{Location:'http://127.0.0.1:'+config.ports[target]+path,'Cache-Control':'no-store'});res.end();return;}
       }
       if(serveFrontend(req,res,path,base))return;
-      if(req.method==='GET'&&path==='/api/config')return json(res,200,{name:'KleeAPI',platform,ports:config.ports});
+      if(req.method==='GET'&&path==='/api/config')return json(res,200,{name:'KleeAPI',platform,ports:config.ports,onboarding:readOnboarding(base)});
       if(req.method==='GET'&&path==='/health')return json(res,200,{ok:true,name:'KleeAPI',platform});
       if(!store.authorized(token(req)))throw new ApiError('API Key 无效',401,'invalid_api_key');
+      if(req.method==='POST'&&path==='/api/onboarding')return json(res,200,saveOnboarding(base,platform,await readBody(req,4096)));
       if(req.method==='GET'&&path==='/api/accounts')return json(res,200,{accounts:store.list().map(account=>platform==='trae'?{...account,checkinDeviceReady:!!sharedDevice}:account),activeUid:store.state.activeUid,warning:store.warning||undefined});
       if(req.method==='POST'&&path==='/api/key'){const body=await readBody(req,4096);store.replaceKey(body.apiKey,token(req));return json(res,200,{ok:true});}
       if(req.method==='POST'&&path==='/api/accounts/import'){const body=await readBody(req,6*1024*1024);return json(res,200,await importAccount(body.json));}

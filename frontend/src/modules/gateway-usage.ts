@@ -21,9 +21,12 @@ export interface GatewayCall {
   totalTokens: number | null
   credits: number | null
   hasConversation?: boolean
+  routeAttempts?: GatewayRouteAttempt[]
   estimatedCredits?: number | null
   creditEstimate?: { amount: number; balanceBefore: number; balanceAfter: number; unit: string; measuredAt: number } | null
 }
+
+export type GatewayRouteAttempt = Pick<GatewayCall, 'model' | 'platform' | 'region' | 'account' | 'status' | 'httpStatus' | 'errorCode' | 'durationMs' | 'inputTokens' | 'outputTokens' | 'totalTokens' | 'credits' | 'estimatedCredits' | 'creditEstimate'>
 
 export interface ConversationMessage {
   role: string
@@ -93,7 +96,7 @@ export function summarizeUsage(records: GatewayCall[]) {
 }
 
 /** 按本地日期生成趋势图，并保留没有积分数据的日期为缺失值。 */
-export function usageTrend(records: GatewayCall[], metric: 'calls' | 'tokens' | 'credits', group: string, light: boolean): EChartsOption {
+export function usageTrend(records: GatewayCall[], metric: 'calls' | 'tokens' | 'credits', group: string, light: boolean, view: { type?: 'bar' | 'line'; stacked?: boolean; showValues?: boolean; expanded?: boolean } = {}): EChartsOption {
   const days = new Map<string, GatewayCall[]>()
   for (const row of records) {
     const day = dayLabel(row.startedAt)
@@ -106,22 +109,25 @@ export function usageTrend(records: GatewayCall[], metric: 'calls' | 'tokens' | 
   const base = chartBase(light)
   return {
     ...base,
-    grid: { top: 34, left: 12, right: 16, bottom: 10, containLabel: true },
+    grid: { top: 34, left: 12, right: 30, bottom: view.expanded ? 60 : 10, containLabel: true },
+    dataZoom: view.expanded ? [{ type: 'slider', bottom: 4, height: 22, borderColor: light ? '#e7dac9' : '#2a3031', fillerColor: light ? '#b9383822' : '#a5ddc522', textStyle: base.textStyle, dataBackground: { lineStyle: { color: light ? '#b93838' : '#a5ddc5' }, areaStyle: { color: light ? '#b93838' : '#a5ddc5' } } }, { type: 'inside' }] : [],
     legend: { top: 0, textStyle: base.textStyle },
     xAxis: { type: 'category', data: labels, axisLabel: { hideOverlap: true, color: base.textStyle?.color } },
     yAxis: {
       type: 'value', minInterval: metric === 'credits' ? undefined : 1,
       axisLabel: { color: base.textStyle?.color },
-      splitLine: { lineStyle: { color: light ? '#e5d4db' : '#323d50' } },
+      splitLine: { lineStyle: { color: light ? '#eee3d4' : '#2a3031' } },
     },
     series: metric === 'calls'
       ? (Object.keys(callStatuses) as GatewayCall['status'][]).map(status => ({
-          name: callStatuses[status], type: 'bar', stack: 'calls', barMaxWidth: 30,
+          name: callStatuses[status], type: view.type ?? 'bar', stack: view.stacked === false ? undefined : 'calls', barMaxWidth: 30,
+          label: { show: !!view.showValues, position: view.type === 'line' ? 'top' : 'inside', color: view.type === 'line' ? base.textStyle?.color : light ? '#fffdf8' : '#101314' },
           data: rows.map(bucket => bucket.filter(row => row.status === status).length),
         }))
       : (metric === 'tokens' ? ['tokens'] : ['reported', 'estimated']).map(source => ({
           name: source === 'tokens' ? 'Token' : source === 'estimated' ? '积分（估算）' : '平台上报积分',
-          type: 'bar',
+          type: view.type ?? 'bar',
+          label: { show: !!view.showValues, position: 'top', color: base.textStyle?.color },
           barMaxWidth: 30,
           data: rows.map(bucket => {
             const values = bucket
@@ -134,26 +140,30 @@ export function usageTrend(records: GatewayCall[], metric: 'calls' | 'tokens' | 
   }
 }
 
-/** 按调用次数显示前八个模型，以请求模型名称为统计口径。 */
-export function usageModels(records: GatewayCall[], light: boolean): EChartsOption {
+export function rankUsageModels(records: GatewayCall[], limit = 8): [string, number][] {
   const counts = new Map<string, number>()
   for (const row of records) counts.set(row.model, (counts.get(row.model) ?? 0) + 1)
-  const top = [...counts].sort((a, b) => b[1] - a[1]).slice(0, 8)
+  return [...counts].sort((a, b) => b[1] - a[1]).slice(0, limit)
+}
+
+/** 以请求模型名称为统计口径，默认显示调用次数前八名。 */
+export function usageModels(records: GatewayCall[], light: boolean, view: { limit?: number; showValues?: boolean; expanded?: boolean } = {}): EChartsOption {
+  const top = rankUsageModels(records, view.limit)
   const base = chartBase(light)
   return {
     ...base,
-    grid: { top: 12, left: 12, right: 18, bottom: 10, containLabel: true },
-    xAxis: { type: 'value', minInterval: 1, axisLabel: { color: base.textStyle?.color }, splitLine: { lineStyle: { color: light ? '#e5d4db' : '#323d50' } } },
-    yAxis: { type: 'category', inverse: true, data: top.map(([model]) => model), axisLabel: { width: 110, overflow: 'truncate', color: base.textStyle?.color } },
-    series: [{ type: 'bar', name: '调用次数', barMaxWidth: 18, data: top.map(([, count]) => count) }],
+    grid: { top: 12, left: 12, right: view.showValues ? 48 : 24, bottom: 10, containLabel: true },
+    xAxis: { type: 'value', minInterval: 1, splitNumber: 3, axisLabel: { hideOverlap: true, color: base.textStyle?.color }, splitLine: { lineStyle: { color: light ? '#eee3d4' : '#2a3031' } } },
+    yAxis: { type: 'category', inverse: true, data: top.map(([model]) => model), axisLabel: { width: view.expanded ? 260 : 110, overflow: view.expanded ? 'break' : 'truncate', color: base.textStyle?.color } },
+    series: [{ type: 'bar', name: '调用次数', barMaxWidth: 18, label: { show: !!view.showValues, position: 'right', color: base.textStyle?.color }, data: top.map(([, count]) => count) }],
   }
 }
 
 function chartBase(light: boolean): EChartsOption {
   return {
     animation: false,
-    color: light ? ['#4164ad', '#b84e68', '#86653d'] : ['#8ca9ff', '#f4978e', '#e1c18e'],
-    textStyle: { color: light ? '#634c55' : '#bdc9dc' },
+    color: light ? ['#42765a', '#b63136', '#936019'] : ['#a5ddc5', '#e49c97', '#e1bc7b'],
+    textStyle: { color: light ? '#796958' : '#98a3a3' },
     tooltip: {
       trigger: 'axis', renderMode: 'richText', confine: true,
       valueFormatter: value => typeof value === 'number' ? formatUsage(value) : '未上报',

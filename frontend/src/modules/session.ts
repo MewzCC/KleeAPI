@@ -2,7 +2,7 @@ import { reactive } from 'vue'
 import type { Platform } from '../types'
 export const platforms: Platform[] = ['gateway', 'workbuddy', 'trae', 'qoder']
 export const names: Record<Platform, string> = { gateway: '统一网关', workbuddy: 'WorkBuddy', trae: 'Trae', qoder: 'Qoder' }
-export const session = reactive({ ready: false, error: '', platform: 'gateway' as Platform, ports: { gateway: 18887, workbuddy: 18791, trae: 17864, qoder: 17865 }, keys: {} as Record<Platform, string> })
+export const session = reactive({ ready: false, error: '', platform: 'gateway' as Platform, ports: { gateway: 18887, workbuddy: 18791, trae: 17864, qoder: 17865 }, keys: {} as Record<Platform, string>, onboarding: { completed: false } as { completed: boolean; platform?: Platform } })
 export function storedKey(p: Platform) { try { return sessionStorage.getItem(`klee.${p}`) || localStorage.getItem(`klee.${p}`) || '' } catch { return '' } }
 export function remembered(p: Platform) { try { return !!localStorage.getItem(`klee.${p}`) } catch { return false } }
 let pendingFragment: URLSearchParams | undefined
@@ -23,6 +23,7 @@ export async function initialize() {
     }
     if (!platforms.includes(config.platform)) throw new Error('本地服务平台配置无效。')
     session.platform = config.platform
+    if (typeof config.onboarding?.completed === 'boolean') session.onboarding = config.onboarding
     const routePlatform = location.pathname.split('/')[2] as Platform
     const current = platforms.includes(routePlatform) ? routePlatform : config.platform
     for (const p of platforms) {

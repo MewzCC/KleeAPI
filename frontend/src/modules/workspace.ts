@@ -19,7 +19,7 @@ export async function feedback(task: () => Promise<unknown>) { try { await task(
 /** 工作空间保存最近一次成功快照，查询失败仅更新错误；签到读取与领取严格分开。 */
 export function useWorkspace(p: Platform) {
   const route = useRoute(), router = useRouter()
-  const validTabs = p === 'gateway' ? ['overview', 'pool', 'models', 'usage', 'checkin', 'guide', 'settings'] : ['overview', 'accounts', 'models', 'checkin', 'quota', 'guide', 'settings']
+  const validTabs = p === 'gateway' ? ['overview', 'pool', 'models', 'auto-models', 'usage', 'checkin', 'guide', 'settings'] : ['overview', 'accounts', 'models', 'checkin', 'quota', 'guide', 'settings']
   const initialTab = typeof route.query.tab === 'string' && validTabs.includes(route.query.tab) ? route.query.tab : 'overview'
   const accounts = ref<Account[]>([]), catalog = ref<Catalog>(), pool = ref<Snapshot>(), quota = ref<Snapshot>(), checkins = ref<Snapshot>()
   const credential = ref(''), login = ref<Login>(), region = ref('cn'), tab = ref(initialTab), auto = ref(false)
@@ -85,7 +85,12 @@ export function useWorkspace(p: Platform) {
       data.fetchedAt ||= new Date().toISOString()
       if (kind === 'quota') {
         quota.value = data
-        accounts.value = accounts.value.map(a => { const row = data.accounts.find(q => q.uid === a.uid); return row && !row.quotaError && Number.isFinite(row.remaining) ? { ...a, credits: row.remaining } : a })
+        accounts.value = accounts.value.map(a => {
+          const row = data.accounts.find(q => q.uid === a.uid)
+          if (!row) return a
+          const { remaining, limit, used, unlimited, unit, quotaError } = row
+          return { ...a, remaining, limit, used, unlimited, unit, quotaError, credits: !quotaError && Number.isFinite(remaining) ? remaining : a.credits }
+        })
       } else if (target === undefined) checkins.value = data
       else {
         checkins.value = mergeCheckins(checkins.value, data, { ...body, desktopOnly })

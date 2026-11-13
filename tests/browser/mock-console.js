@@ -4,6 +4,7 @@ async (page) => {
   });
   const platforms = ['workbuddy', 'trae', 'qoder'];
   let traeDesktopBound = false;
+  let onboarding = { completed: false };
   const accounts = p => [
     { uid: 'shared-user', nickname: p === 'workbuddy' ? '日常开发账号' : p === 'trae' ? 'Trae 主账号' : 'Qoder 国内开发', platform: p, region: 'cn', enabled: true, active: true, status: 'ready', credits: 128.75, remaining: 128.75, unit: '积分', plan: 'Pro', email: 'demo@example.test', expiresAt: Date.now() + 86400000, source: '官方登录', models: ['Claude-Sonnet-4'], ...(p === 'trae' ? { desktopBound: traeDesktopBound, checkinDeviceReady: traeDesktopBound } : {}) },
     { uid: p + '-secondary', nickname: p === 'qoder' ? '国际版备用账号' : '备用测试账号', platform: p, region: 'global', enabled: false, status: 'expired', remaining: null, models: [] },
@@ -17,7 +18,8 @@ async (page) => {
     if (!url.pathname.startsWith('/api/') && !url.pathname.startsWith('/v1/')) return route.continue();
     const platform = ({ 18887: 'gateway', 18791: 'workbuddy', 17864: 'trae', 17865: 'qoder' })[url.port] || 'gateway';
     let data;
-    if (url.pathname === '/api/config') data = { platform, ports: { gateway: 18887, workbuddy: 18791, trae: 17864, qoder: 17865 } };
+    if (url.pathname === '/api/config') data = { platform, ports: { gateway: 18887, workbuddy: 18791, trae: 17864, qoder: 17865 }, onboarding };
+    else if (url.pathname === '/api/onboarding' && req.method() === 'POST') data = onboarding = req.postDataJSON().completed ? { completed: true, platform } : { completed: false };
     else if (url.pathname === '/api/login') data = { id: 'offline-login', url: 'https://www.trae.cn/authorization?login_trace_id=offline-test', expiresAt: Date.now() + 60000 };
     else if (url.pathname === '/api/login/offline-login') data = { status: 'pending' };
     else if (url.pathname === '/api/gateway/status') data = { accounts: platforms.flatMap(accounts), models, platforms: platforms.map(platform => ({ platform })), fetchedAt: Date.now() };

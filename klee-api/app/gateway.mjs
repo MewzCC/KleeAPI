@@ -1,4 +1,5 @@
 import { serveFrontend } from "./web.mjs";
+import { readOnboarding, saveOnboarding } from './onboarding.mjs';
 import { createServer } from "node:http";
 import { readFileSync, existsSync, mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -11,6 +12,7 @@ import { mergeCompletionUsage, parseEvents } from "./stream.mjs";
 import { createUsageLog, usageFields } from "./gateway-usage.mjs";
 import { captureConversation } from "./conversation.mjs";
 import { checkinTarget } from "./checkin.mjs";
+import { createAutoModelStore } from './auto-models.mjs';
 
 const platforms = { workbuddy: "WorkBuddy", trae: "Trae", qoder: "Qoder" };
 const keyPattern = /^klee-[\x21-\x7e]{3,251}$/;
@@ -22,6 +24,20 @@ const eligible = (a) =>
   !a.modelsError &&
   (a.unlimited === true || (Number.isFinite(a.remaining) && a.remaining > 0));
 const accountId = (a) => JSON.stringify([a.platform, a.uid]);
+const candidateId = c => JSON.stringify([c.account.platform, c.account.uid, c.canonicalId]);
+const canAutoRetry = (error, group) => {
+  if (['auto_attempt_timeout', 'upstream_timeout'].includes(error.code) && !group.retryOnTimeout) return false;
+  return ['upstream_unavailable', 'invalid_platform_response', 'upstream_stream_error'].includes(error.code)
+    || [401, 403, 404, 408, 409, 429].includes(error.status) || error.status >= 500;
+};
+const hasModelOutput = message => !!message && typeof message === 'object' && (
+  typeof message.content === 'string' && message.content.trim().length > 0
+  || Array.isArray(message.content) && message.content.some(part => part && (typeof part.text === 'string' && part.text.trim() || part.type === 'image_url' && part.image_url?.url))
+  || typeof message.reasoning_content === 'string' && message.reasoning_content.length > 0
+  || typeof message.refusal === 'string' && message.refusal.length > 0
+  || Array.isArray(message.tool_calls) && message.tool_calls.some(tool => tool && typeof tool === 'object' && (tool.id || tool.function?.name || tool.function?.arguments))
+  || message.function_call && typeof message.function_call === 'object' && (message.function_call.name || message.function_call.arguments)
+);
 const abortError = (signal) =>
   signal?.reason instanceof ApiError
     ? signal.reason
@@ -117,12 +133,13 @@ async function write(res, value, signal) {
 }
 
 /** 只改写 OpenAI 帧的 model；保留 choices、工具调用、usage 和结束标志。 */
-async function relay(response, res, request, signal, observe) {
+async function relay(response, res, request, signal, observe, strict = false) {
   if (
     !(response.headers.get("content-type") || "").includes("text/event-stream")
   ) {
     const data = await responseJSON(response, signal);
-    if (!data || data.error || !Array.isArray(data.choices))
+    if (strict && data && typeof data === 'object') observe(data, false);
+    if (!data || data.error || !Array.isArray(data.choices) || strict && (!data.choices.length || data.choices.some(c => !hasModelOutput(c?.message))))
       throw new ApiError(
         "Platform returned an invalid completion",
         502,
@@ -162,10 +179,12 @@ async function relay(response, res, request, signal, observe) {
       "invalid_platform_response",
     );
   }
-  let done = false;
+  let done = false, generated = false, pendingSize = 0;
+  const pending = [];
   for await (const event of parseEvents(response.body, { signal })) {
     if (signal?.aborted) throw abortError(signal);
     if (event.data === "[DONE]") {
+      if (strict && !generated) throw new ApiError('Platform stream contained no completion', 502, 'invalid_platform_response');
       done = true;
       if (!res.headersSent)
         res.writeHead(200, {
@@ -185,6 +204,7 @@ async function relay(response, res, request, signal, observe) {
         "upstream_stream_error",
       );
     }
+    if (strict && data && typeof data === 'object') observe(data, false);
     if (
       !data ||
       typeof data !== "object" ||
@@ -196,15 +216,27 @@ async function relay(response, res, request, signal, observe) {
         502,
         "upstream_stream_error",
       );
+    if (strict && (!Array.isArray(data.choices) || data.choices.some(c => !c || typeof c !== 'object' || !c.delta && c.finish_reason == null)))
+      throw new ApiError('Platform stream contained an invalid completion', 502, 'invalid_platform_response');
     observe(data);
     data.model = request.model;
+    const frame = 'data: ' + JSON.stringify(data) + '\n\n';
+    if (strict && !generated) {
+      generated = data.choices.some(c => hasModelOutput(c.delta));
+      pendingSize += frame.length;
+      if (pendingSize > 65536) throw new ApiError('Platform stream did not begin a completion', 502, 'invalid_platform_response');
+      pending.push(frame);
+      if (!generated) continue;
+    }
     if (!res.headersSent)
       res.writeHead(200, {
         "Content-Type": "text/event-stream; charset=utf-8",
         "Cache-Control": "no-cache",
         "X-Accel-Buffering": "no",
       });
-    await write(res, "data: " + JSON.stringify(data) + "\n\n", signal);
+    if (pending.length) {
+      for (const buffered of pending.splice(0)) await write(res, buffered, signal);
+    } else await write(res, frame, signal);
   }
   if (!done)
     throw new ApiError(
@@ -249,6 +281,8 @@ export async function createGateway({
       "invalid_api_key_format",
     );
   const usageLog = createUsageLog(memoryKey ? undefined : join(base, "Gateway-Chat", "data", "Gateway", "usage.json"));
+  const autoModels = createAutoModelStore(memoryKey ? undefined : join(base, 'Gateway-Chat', 'data', 'Gateway', 'auto-models.json'));
+  const autoHealth = new Map();
   const logLabel = (value) => String(value ?? "")
     .replace(/klee-[^\s]+/gi, "[Key 已隐藏]")
     .replace(/[\x00-\x1f\x7f]/g, " ")
@@ -478,7 +512,7 @@ export async function createGateway({
             .get(id)
             .candidates.some((c) => accountId(c.account) === accountId(account))
         )
-          canonical.get(id).candidates.push({ account, upstream: model.id });
+          canonical.get(id).candidates.push({ account, upstream: model.id, canonicalId: id });
         if (!bare.has(model.id)) bare.set(model.id, new Set());
         bare.get(model.id).add(id);
       }
@@ -486,7 +520,7 @@ export async function createGateway({
       [...canonical].map(([id, m]) => [id, { ...m, canonicalIds: [id] }]),
     );
     for (const [id, ids] of bare)
-      if (ids.size === 1 && !logical.has(id) && !reservedModel.test(id)) {
+      if (ids.size === 1 && !logical.has(id) && !reservedModel.test(id) && !autoModels.get(id)) {
         const target = [...ids][0];
         logical.set(id, {
           ...canonical.get(target),
@@ -496,7 +530,7 @@ export async function createGateway({
       }
     for (const [id, targets] of Object.entries(config.gateway.aliases)) {
       // 平台离线也保留其命名空间，避免裸 ID 或配置别名冒充另一个平台的规范 ID。
-      if (canonical.has(id) || reservedModel.test(id)) continue;
+      if (canonical.has(id) || reservedModel.test(id) || autoModels.get(id)) continue;
       const ids = [...new Set(targets)].filter((t) => canonical.has(t));
       if (!ids.length) continue;
       const candidates = ids.flatMap((t) => canonical.get(t).candidates),
@@ -512,15 +546,20 @@ export async function createGateway({
         }),
       });
     }
+    for (const group of autoModels.snapshot().groups.filter(g => g.enabled)) {
+      const targets = group.targets.filter(t => t.enabled);
+      logical.set(group.id, { id: group.id, name: group.name, auto: true, canonicalIds: targets.map(t => t.model), candidates: targets.flatMap(t => canonical.get(t.model)?.candidates ?? []) });
+    }
     const models = [...logical.values()]
-      .filter((m) => m.candidates.length)
+      .filter((m) => m.candidates.length || m.auto)
       .map((m) => ({
         id: m.id,
         object: "model",
         owned_by: "klee",
         ...(m.name ? { name: m.name } : {}),
         canonicalIds: m.canonicalIds,
-        availableAccounts: m.candidates.length,
+        availableAccounts: m.auto ? new Set(m.candidates.map(c => accountId(c.account))).size : m.candidates.length,
+        ...(m.auto ? { auto: true } : {}),
       }));
     return {
       logical,
@@ -532,6 +571,25 @@ export async function createGateway({
       platforms: entries.map((e) => ({ platform: e.platform, error: e.error })),
       fetchedAt: Math.min(...entries.map((e) => e.at)),
     };
+  }
+
+  async function autoModelSnapshot() {
+    const state = autoModels.snapshot(), data = await catalog();
+    const groups = state.groups.map(group => ({ ...group, targets: group.targets.map(target => {
+      const candidates = data.logical.get(target.model)?.candidates ?? [];
+      const health = [...autoHealth].filter(([, value]) => value.model === target.model).map(([, value]) => value);
+      const availableAccounts = candidates.filter(c => (autoHealth.get(candidateId(c))?.cooldownUntil ?? 0) <= Date.now()).length;
+      return { ...target, availableAccounts,
+        cooldownUntil: candidates.length && !availableAccounts ? Math.min(...candidates.map(c => autoHealth.get(candidateId(c))?.cooldownUntil ?? 0)) : 0,
+        lastSuccessAt: Math.max(0, ...health.map(h => h.lastSuccessAt ?? 0)), lastFailureAt: Math.max(0, ...health.map(h => h.lastFailureAt ?? 0)),
+        errorCode: health.sort((a, b) => (b.lastFailureAt ?? 0) - (a.lastFailureAt ?? 0))[0]?.errorCode ?? null };
+    }) }));
+    const models = [...data.logical.values()].filter(m => m.id === m.canonicalIds[0] && reservedModel.test(m.id)).map(m => ({ id: m.id, name: m.name, availableAccounts: m.candidates.length }));
+    return { groups, warning: state.warning, models };
+  }
+
+  function autoCandidates(group, logical) {
+    return group.targets.flatMap((target, priority) => target.enabled ? (logical.get(target.model)?.candidates ?? []).map(c => ({ ...c, priority })) : []);
   }
 
   /** 移除等待者并撤销取消监听，避免已结束请求占据队列或被再次唤醒。 */
@@ -575,7 +633,7 @@ export async function createGateway({
             waiter.reject(abortError(waiter.signal));
             continue;
           }
-          const model = data.logical.get(waiter.model);
+          const model = waiter.autoGroup ? { candidates: autoCandidates(waiter.autoGroup, data.logical) } : data.logical.get(waiter.model);
           let error;
           if (!model)
             error = new ApiError(
@@ -591,11 +649,11 @@ export async function createGateway({
             );
           const remaining =
             model?.candidates.filter(
-              (c) => !waiter.tried.has(accountId(c.account)),
+              (c) => !waiter.tried.has(waiter.autoGroup ? candidateId(c) : accountId(c.account)),
             ) || [];
           if (!error && !remaining.length)
             error =
-              waiter.lastError ||
+              (waiter.autoGroup ? new ApiError('自动模型组的所有可用候选均调用失败', 503, 'auto_models_exhausted') : waiter.lastError) ||
               new ApiError(
                 "No eligible account is available",
                 503,
@@ -611,10 +669,11 @@ export async function createGateway({
               (c) =>
                 !c.account.inFlight &&
                 !busy.get(accountId(c.account)) &&
-                (cooldowns.get(accountId(c.account)) || 0) <= Date.now(),
+                (cooldowns.get(accountId(c.account)) || 0) <= Date.now() &&
+                (!waiter.autoGroup || (autoHealth.get(candidateId(c))?.cooldownUntil ?? 0) <= Date.now()),
             )
             .sort(
-              (a, b) =>
+              (a, b) => (waiter.autoGroup ? a.priority - b.priority : 0) ||
                 (turns.get(accountId(a.account)) || 0) -
                 (turns.get(accountId(b.account)) || 0),
             )[0];
@@ -644,7 +703,7 @@ export async function createGateway({
   }
 
   /** 等待计入原请求超时；取消后立即出队，队列达到容量上限时明确拒绝新增等待。 */
-  function reserve(model, tried, signal, lastError) {
+  function reserve(model, tried, signal, lastError, autoGroup) {
     if (signal.aborted) return Promise.reject(abortError(signal));
     if (queue.length >= maxQueueSize)
       return Promise.reject(
@@ -656,6 +715,7 @@ export async function createGateway({
         tried,
         signal,
         lastError,
+        autoGroup,
         resolve,
         reject,
         abort: null,
@@ -672,9 +732,11 @@ export async function createGateway({
 
   /** 槽位持续占用到响应结束；只有平台明确确认未生成的拒绝才允许换号。 */
   async function chat(req, res, request) {
+    const autoGroup = autoModels.get(request.model);
+    if (autoGroup && !autoGroup.enabled) throw new ApiError('自动模型组已停用', 503, 'auto_model_disabled');
     const recordVersion = usageLog.recordVersion();
     const permit = usageLog.beginCapture();
-    const conversation = permit === null ? null : captureConversation(request.messages);
+    let conversation = permit === null ? null : captureConversation(request.messages);
     const record = {
       id: randomUUID(),
       startedAt: Date.now(),
@@ -688,6 +750,7 @@ export async function createGateway({
       status: "success",
       httpStatus: 200,
       errorCode: null,
+      ...(autoGroup ? { routeAttempts: [] } : {}),
     };
     const started = performance.now();
     let usage = null;
@@ -702,7 +765,7 @@ export async function createGateway({
             "upstream_timeout",
           ),
         ),
-      requestTimeoutMs,
+      autoGroup ? Math.min(requestTimeoutMs, autoGroup.totalTimeoutMs) : requestTimeoutMs,
     );
     const abort = () => controller.abort();
     const close = () => {
@@ -713,15 +776,26 @@ export async function createGateway({
     try {
       const tried = new Set();
       let lastError;
-      for (let attempt = 0; attempt < 3; attempt++) {
+      for (let attempt = 0; attempt < (autoGroup?.maxAttempts ?? 3); attempt++) {
         const candidate = await reserve(
             request.model,
             tried,
             controller.signal,
             lastError,
+            autoGroup,
           ),
           id = accountId(candidate.account);
-        tried.add(id);
+        tried.add(autoGroup ? candidateId(candidate) : id);
+        const attemptController = autoGroup ? new AbortController() : null;
+        const signal = attemptController ? AbortSignal.any([controller.signal, attemptController.signal]) : controller.signal;
+        const attemptTimer = autoGroup ? setTimeout(() => attemptController.abort(new ApiError('候选模型响应超时', 504, 'auto_attempt_timeout')), autoGroup.attemptTimeoutMs) : null;
+        const attemptStarted = performance.now();
+        const attemptRecord = autoGroup ? { model: logLabel(candidate.canonicalId), platform: candidate.account.platform, region: logLabel(candidate.account.region), account: logLabel(candidate.account.nickname || candidate.account.uid), status: 'success', httpStatus: 200, errorCode: null } : null;
+        if (autoGroup) {
+          usage = null;
+          conversation = permit === null ? null : captureConversation(request.messages);
+          record.routeAttempts.push(attemptRecord);
+        }
         try {
           if (controller.signal.aborted) throw abortError(controller.signal);
           record.platform = candidate.account.platform;
@@ -738,11 +812,11 @@ export async function createGateway({
                 uid: candidate.account.uid,
                 request: { ...request, model: candidate.upstream },
               }),
-              signal: controller.signal,
+              signal,
             },
           );
           if (!response.ok) {
-            const data = await responseJSON(response, controller.signal).catch(
+            const data = await responseJSON(response, signal).catch(
                 () => null,
               ),
               code = [
@@ -752,7 +826,8 @@ export async function createGateway({
               ].includes(data?.error?.code)
                 ? data.error.code
                 : "platform_chat_error";
-            if (controller.signal.aborted) throw abortError(controller.signal);
+            if (autoGroup && data && typeof data === 'object') usage = mergeCompletionUsage(usage, data);
+            if (signal.aborted) throw abortError(signal);
             lastError = new ApiError(
               "Platform rejected the completion (HTTP " + response.status + ")",
               response.status >= 400 && response.status <= 599
@@ -760,6 +835,7 @@ export async function createGateway({
                 : 502,
               code,
             );
+            if (autoGroup) throw lastError;
             // 平台明确因账号竞争拒绝且尚未生成时重新排队；短暂冷却避免快照竞争导致紧密重试。
             if (
               response.status === 429 &&
@@ -775,12 +851,31 @@ export async function createGateway({
               continue;
             throw lastError;
           }
-          await relay(response, res, request, controller.signal, (data) => {
+          await relay(response, res, request, signal, (data, capture = true) => {
             usage = mergeCompletionUsage(usage, data);
-            conversation?.observe(data);
-          });
+            if (capture) conversation?.observe(data);
+          }, !!autoGroup);
+          if (autoGroup) {
+            autoHealth.set(candidateId(candidate), { model: candidate.canonicalId, lastSuccessAt: Date.now(), cooldownUntil: 0, errorCode: null });
+          }
           return;
+        } catch (error) {
+          if (!autoGroup) throw error;
+          const failure = signal.aborted ? abortError(signal) : error;
+          lastError = failure;
+          attemptRecord.status = controller.signal.aborted && abortError(controller.signal).status === 499 ? 'canceled' : 'failed';
+          attemptRecord.httpStatus = failure instanceof ApiError ? failure.status : 502;
+          attemptRecord.errorCode = failure instanceof ApiError ? logLabel(failure.code) : 'gateway_error';
+          const retryable = canAutoRetry(failure, autoGroup);
+          if (!controller.signal.aborted) {
+            if (autoHealth.size >= 5000) autoHealth.delete(autoHealth.keys().next().value);
+            autoHealth.set(candidateId(candidate), { ...autoHealth.get(candidateId(candidate)), model: candidate.canonicalId, lastFailureAt: Date.now(), errorCode: attemptRecord.errorCode, cooldownUntil: retryable ? Date.now() + autoGroup.cooldownMs : 0 });
+          }
+          if (controller.signal.aborted || res.headersSent || res.destroyed || !retryable) throw failure;
         } finally {
+          if (attemptTimer) clearTimeout(attemptTimer);
+          attemptController?.abort();
+          if (attemptRecord) Object.assign(attemptRecord, { durationMs: Math.round(performance.now() - attemptStarted), ...usageFields(usage) });
           busy.delete(id);
           const entry = snapshots.get(candidate.account.platform);
           if (entry) entry.at = 0;
@@ -788,7 +883,7 @@ export async function createGateway({
         }
       }
       throw (
-        lastError ||
+        (autoGroup ? new ApiError('已达到自动模型尝试上限，请查看切换记录', 503, 'auto_models_exhausted') : lastError) ||
         new ApiError(
           "No eligible account is available",
           503,
@@ -796,7 +891,10 @@ export async function createGateway({
         )
       );
     } catch (error) {
-      const failure = controller.signal.aborted ? abortError(controller.signal) : error;
+      let failure = controller.signal.aborted ? abortError(controller.signal) : error;
+      if (autoGroup && !controller.signal.aborted && !res.headersSent && failure.code === 'no_available_account')
+        failure = new ApiError('自动模型组没有可用候选，请检查账号、额度和模型配置', 503, 'auto_models_exhausted');
+      if (autoGroup && !res.headersSent) failure.attempts = record.routeAttempts;
       record.httpStatus = failure instanceof ApiError ? failure.status : 502;
       record.errorCode = failure instanceof ApiError ? logLabel(failure.code) : "gateway_error";
       record.status = record.httpStatus === 499 ? "canceled" : "failed";
@@ -876,9 +974,29 @@ export async function createGateway({
           name: "KleeAPI",
           platform: "gateway",
           ports: config.ports,
+          onboarding: readOnboarding(base),
         });
       if (!authorized(token(req)))
         throw new ApiError("Invalid API key", 401, "invalid_api_key");
+      if (path === '/api/gateway/auto-models' && req.method === 'GET') return json(res, 200, await autoModelSnapshot());
+      if (path === '/api/gateway/auto-models' && req.method === 'POST') {
+        const body = await readBody(req, 65536);
+        if (Object.hasOwn(config.gateway.aliases, body?.id ?? '')) throw new ApiError('此模型 ID 已被旧模型别名使用', 409, 'auto_model_exists');
+        autoModels.create(body);
+        void drainQueue();
+        return json(res, 201, await autoModelSnapshot());
+      }
+      const autoModelPath = path.match(/^\/api\/gateway\/auto-models\/([^/]+)$/);
+      if (autoModelPath && ['PATCH', 'DELETE'].includes(req.method)) {
+        let id;
+        try { id = decodeURIComponent(autoModelPath[1]); } catch { throw new ApiError('自动模型 ID 无效', 400, 'invalid_auto_model'); }
+        if (req.method === 'PATCH') autoModels.update(id, await readBody(req, 65536));
+        else autoModels.remove(id);
+        void drainQueue();
+        return json(res, 200, await autoModelSnapshot());
+      }
+      if (req.method === 'POST' && path === '/api/onboarding')
+        return json(res, 200, saveOnboarding(base, 'gateway', await readBody(req, 4096)));
       if (req.method === 'GET' && path === '/api/checkin') return json(res, 200, await checkins());
       if (req.method === 'POST' && path === '/api/checkin') {
         if (checking) throw new ApiError('签到正在进行，请等待本次结果', 409, 'checkin_in_progress');
@@ -964,7 +1082,7 @@ export async function createGateway({
         code = error instanceof ApiError ? error.code : "gateway_error";
       if (!res.headersSent && !res.destroyed)
         json(res, error instanceof ApiError ? error.status : 502, {
-          error: { message, code, retryable: false },
+          error: { message, code, retryable: false, ...(Array.isArray(error.attempts) ? { attempts: error.attempts } : {}) },
         });
       else if (!res.destroyed)
         res.end(
