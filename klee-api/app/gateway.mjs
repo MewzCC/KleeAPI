@@ -8,7 +8,7 @@ import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { loadConfig, root } from "./config.mjs";
 import { atomicWrite } from "./store.mjs";
 import { ApiError, json, readBody, upstreamFetch } from "./http.mjs";
-import { mergeCompletionUsage, parseEvents } from "./stream.mjs";
+import { hasModelOutput, mergeCompletionUsage, parseEvents } from "./stream.mjs";
 import { createUsageLog, usageFields } from "./gateway-usage.mjs";
 import { captureConversation } from "./conversation.mjs";
 import { checkinTarget } from "./checkin.mjs";
@@ -30,14 +30,6 @@ const canAutoRetry = (error, group) => {
   return ['upstream_unavailable', 'invalid_platform_response', 'upstream_stream_error'].includes(error.code)
     || [401, 403, 404, 408, 409, 429].includes(error.status) || error.status >= 500;
 };
-const hasModelOutput = message => !!message && typeof message === 'object' && (
-  typeof message.content === 'string' && message.content.trim().length > 0
-  || Array.isArray(message.content) && message.content.some(part => part && (typeof part.text === 'string' && part.text.trim() || part.type === 'image_url' && part.image_url?.url))
-  || typeof message.reasoning_content === 'string' && message.reasoning_content.length > 0
-  || typeof message.refusal === 'string' && message.refusal.length > 0
-  || Array.isArray(message.tool_calls) && message.tool_calls.some(tool => tool && typeof tool === 'object' && (tool.id || tool.function?.name || tool.function?.arguments))
-  || message.function_call && typeof message.function_call === 'object' && (message.function_call.name || message.function_call.arguments)
-);
 const abortError = (signal) =>
   signal?.reason instanceof ApiError
     ? signal.reason
@@ -133,7 +125,7 @@ async function write(res, value, signal) {
 }
 
 /** 只改写 OpenAI 帧的 model；保留 choices、工具调用、usage 和结束标志。 */
-async function relay(response, res, request, signal, observe, strict = false) {
+async function relay(response, res, request, signal, observe, strict = false, onFirstOutput) {
   if (
     !(response.headers.get("content-type") || "").includes("text/event-stream")
   ) {
@@ -145,6 +137,7 @@ async function relay(response, res, request, signal, observe, strict = false) {
         502,
         "invalid_platform_response",
       );
+    onFirstOutput?.();
     observe(data);
     data.model = request.model;
     if (request.stream !== true) return json(res, 200, data);
@@ -212,7 +205,7 @@ async function relay(response, res, request, signal, observe, strict = false) {
       data.error
     )
       throw new ApiError(
-        "Platform stream failed",
+        "上游模型返回了流式响应错误",
         502,
         "upstream_stream_error",
       );
@@ -227,6 +220,7 @@ async function relay(response, res, request, signal, observe, strict = false) {
       if (pendingSize > 65536) throw new ApiError('Platform stream did not begin a completion', 502, 'invalid_platform_response');
       pending.push(frame);
       if (!generated) continue;
+      onFirstOutput?.();
     }
     if (!res.headersSent)
       res.writeHead(200, {
@@ -673,7 +667,8 @@ export async function createGateway({
                 (!waiter.autoGroup || (autoHealth.get(candidateId(c))?.cooldownUntil ?? 0) <= Date.now()),
             )
             .sort(
-              (a, b) => (waiter.autoGroup ? a.priority - b.priority : 0) ||
+              (a, b) => (waiter.autoGroup ?
+                (waiter.modelTries.get(a.canonicalId) || 0) - (waiter.modelTries.get(b.canonicalId) || 0) || a.priority - b.priority : 0) ||
                 (turns.get(accountId(a.account)) || 0) -
                 (turns.get(accountId(b.account)) || 0),
             )[0];
@@ -683,7 +678,11 @@ export async function createGateway({
           busy.set(id, 1);
           turns.set(id, ++sequence);
           removeWaiter(waiter);
-          waiter.resolve(candidate);
+          if (waiter.autoGroup) {
+            const pendingModels = new Set(remaining.filter(c => !waiter.modelTries.has(c.canonicalId)).map(c => c.canonicalId));
+            pendingModels.add(candidate.canonicalId);
+            waiter.resolve({ ...candidate, remainingModelCount: pendingModels.size });
+          } else waiter.resolve(candidate);
         }
       } while (drainAgain);
     } finally {
@@ -703,7 +702,7 @@ export async function createGateway({
   }
 
   /** 等待计入原请求超时；取消后立即出队，队列达到容量上限时明确拒绝新增等待。 */
-  function reserve(model, tried, signal, lastError, autoGroup) {
+  function reserve(model, tried, signal, lastError, autoGroup, modelTries) {
     if (signal.aborted) return Promise.reject(abortError(signal));
     if (queue.length >= maxQueueSize)
       return Promise.reject(
@@ -716,6 +715,7 @@ export async function createGateway({
         signal,
         lastError,
         autoGroup,
+        modelTries,
         resolve,
         reject,
         abort: null,
@@ -753,20 +753,13 @@ export async function createGateway({
       ...(autoGroup ? { routeAttempts: [] } : {}),
     };
     const started = performance.now();
+    const timeoutMs = autoGroup ? Math.min(requestTimeoutMs, autoGroup.totalTimeoutMs) : requestTimeoutMs;
+    const deadline = started + timeoutMs;
+    const totalTimeoutError = () => new ApiError(autoGroup ? '自动模型组等待首个有效输出的总时限已用尽' : 'Platform completion timed out', 504, 'upstream_timeout');
     let usage = null;
     const controller = new AbortController();
     controllers.add(controller);
-    const timer = setTimeout(
-      () =>
-        controller.abort(
-          new ApiError(
-            "Platform completion timed out",
-            504,
-            "upstream_timeout",
-          ),
-        ),
-      autoGroup ? Math.min(requestTimeoutMs, autoGroup.totalTimeoutMs) : requestTimeoutMs,
-    );
+    const timer = setTimeout(() => controller.abort(totalTimeoutError()), timeoutMs);
     const abort = () => controller.abort();
     const close = () => {
       if (!res.writableEnded) abort();
@@ -775,6 +768,7 @@ export async function createGateway({
     res.on("close", close);
     try {
       const tried = new Set();
+      const modelTries = new Map();
       let lastError;
       for (let attempt = 0; attempt < (autoGroup?.maxAttempts ?? 3); attempt++) {
         const candidate = await reserve(
@@ -783,12 +777,16 @@ export async function createGateway({
             controller.signal,
             lastError,
             autoGroup,
+            modelTries,
           ),
           id = accountId(candidate.account);
         tried.add(autoGroup ? candidateId(candidate) : id);
+        if (autoGroup) modelTries.set(candidate.canonicalId, (modelTries.get(candidate.canonicalId) || 0) + 1);
         const attemptController = autoGroup ? new AbortController() : null;
         const signal = attemptController ? AbortSignal.any([controller.signal, attemptController.signal]) : controller.signal;
-        const attemptTimer = autoGroup ? setTimeout(() => attemptController.abort(new ApiError('候选模型响应超时', 504, 'auto_attempt_timeout')), autoGroup.attemptTimeoutMs) : null;
+        // Share the remaining budget across untried models before giving a model another account.
+        const attemptBudget = autoGroup ? Math.min(autoGroup.attemptTimeoutMs, Math.max(1, Math.floor((deadline - performance.now()) / Math.min(candidate.remainingModelCount, autoGroup.maxAttempts - attempt)))) : 0;
+        const attemptTimer = autoGroup ? setTimeout(() => attemptController.abort(new ApiError('候选模型未在等待时限内返回有效输出', 504, 'auto_attempt_timeout')), attemptBudget) : null;
         const attemptStarted = performance.now();
         const attemptRecord = autoGroup ? { model: logLabel(candidate.canonicalId), platform: candidate.account.platform, region: logLabel(candidate.account.region), account: logLabel(candidate.account.nickname || candidate.account.uid), status: 'success', httpStatus: 200, errorCode: null } : null;
         if (autoGroup) {
@@ -797,6 +795,7 @@ export async function createGateway({
           record.routeAttempts.push(attemptRecord);
         }
         try {
+          if (performance.now() >= deadline && !controller.signal.aborted) controller.abort(totalTimeoutError());
           if (controller.signal.aborted) throw abortError(controller.signal);
           record.platform = candidate.account.platform;
           record.region = logLabel(candidate.account.region);
@@ -810,6 +809,7 @@ export async function createGateway({
               method: "POST",
               body: JSON.stringify({
                 uid: candidate.account.uid,
+                ...(autoGroup && request.stream === true ? { timeoutUntilFirstOutput: true } : {}),
                 request: { ...request, model: candidate.upstream },
               }),
               signal,
@@ -854,7 +854,11 @@ export async function createGateway({
           await relay(response, res, request, signal, (data, capture = true) => {
             usage = mergeCompletionUsage(usage, data);
             if (capture) conversation?.observe(data);
-          }, !!autoGroup);
+          }, !!autoGroup, autoGroup ? () => {
+            clearTimeout(attemptTimer);
+            clearTimeout(timer);
+            attemptRecord.firstOutputMs = Math.round(performance.now() - attemptStarted);
+          } : undefined);
           if (autoGroup) {
             autoHealth.set(candidateId(candidate), { model: candidate.canonicalId, lastSuccessAt: Date.now(), cooldownUntil: 0, errorCode: null });
           }
@@ -1089,8 +1093,8 @@ export async function createGateway({
           "data: " +
             JSON.stringify({
               error: {
-                message: "Platform stream failed",
-                code: "upstream_stream_error",
+                message,
+                code,
                 retryable: false,
               },
             }) +

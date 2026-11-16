@@ -44,9 +44,9 @@ export function validateAutoGroup(group: AutoGroup): string {
   if (group.targets.length > 20) return '每组最多选择 20 个候选模型。'
   if (group.enabled && !group.targets.some(target => target.enabled)) return '启用的模型组至少需要一个启用的候选模型。'
   if (new Set(group.targets.map(target => target.model)).size !== group.targets.length || group.targets.some(target => !target.model || target.model.startsWith('auto/'))) return '候选模型必须是去重的真实模型 ID。'
-  for (const [value, min, max, name] of [[group.attemptTimeoutMs, 1000, 120000, '单次超时'], [group.totalTimeoutMs, 1000, 300000, '总超时'], [group.maxAttempts, 1, 60, '最多尝试'], [group.cooldownMs, 1000, 300000, '失败冷却']] as const) {
+  for (const [value, min, max, name] of [[group.attemptTimeoutMs, 1000, 120000, '首个输出等待上限'], [group.totalTimeoutMs, 1000, 300000, '路由总等待上限'], [group.maxAttempts, 1, 60, '最多尝试'], [group.cooldownMs, 1000, 300000, '失败冷却']] as const) {
     if (!Number.isInteger(value) || value < min || value > max) return `${name}须为 ${min}–${max} 之间的整数。`
   }
-  if (group.attemptTimeoutMs > group.totalTimeoutMs) return '单次超时不能超过总超时。'
+  if (group.attemptTimeoutMs > group.totalTimeoutMs) return '首个输出等待上限不能超过路由总等待上限。'
   return ''
 }

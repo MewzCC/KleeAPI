@@ -173,7 +173,7 @@ const modelRanking = computed(() => rankUsageModels(filtered.value, modelLimit.v
 const latency = (value: number | null) => value === null ? '—' : value >= 1000
   ? (value / 1000).toFixed(2) + ' s' : value + ' ms'
 const routeErrorLabels: Record<string, string> = {
-  auto_attempt_timeout: '候选响应超时', upstream_timeout: '请求超时', invalid_platform_response: '未返回有效内容',
+  auto_attempt_timeout: '等待首个有效输出超时', upstream_timeout: '请求超时', invalid_platform_response: '未返回有效内容',
   upstream_stream_error: '流式响应中断', upstream_unavailable: '无法连接平台', request_canceled: '请求已取消',
   no_available_account: '没有可用账号', account_busy: '账号忙碌', upstream_rate_limited: '平台限流',
   400: '请求参数不兼容', 401: '账号授权失效', 403: '权限不足', 404: '模型不可用', 429: '平台限流',

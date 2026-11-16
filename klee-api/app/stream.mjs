@@ -52,8 +52,17 @@ export function mergeCompletionUsage(previous, data) {
   };
 }
 
+export const hasModelOutput = message => !!message && typeof message === 'object' && (
+  typeof message.content === 'string' && message.content.trim().length > 0
+  || Array.isArray(message.content) && message.content.some(part => part && (typeof part.text === 'string' && part.text.trim() || part.type === 'image_url' && part.image_url?.url))
+  || typeof message.reasoning_content === 'string' && message.reasoning_content.length > 0
+  || typeof message.refusal === 'string' && message.refusal.length > 0
+  || Array.isArray(message.tool_calls) && message.tool_calls.some(tool => tool && typeof tool === 'object' && (tool.id || tool.function?.name || tool.function?.arguments))
+  || message.function_call && typeof message.function_call === 'object' && (message.function_call.name || message.function_call.arguments)
+);
+
 /** 将平台 SSE 统一成 OpenAI 格式，同时支持流式与完整响应，不重试请求。 */
-export async function relayCompletion(response,res,{stream=false,model,format='openai',signal,finalizeUsage}={}){
+export async function relayCompletion(response,res,{stream=false,model,format='openai',signal,finalizeUsage,onFirstOutput}={}){
   const send=value=>write(res,value,signal);
   if(!response.ok){await response.body?.cancel();throw new ApiError('上游返回 HTTP '+response.status,response.status,'upstream_http_error');}
   if(!(response.headers.get('content-type')||'').includes('text/event-stream')){
@@ -83,6 +92,7 @@ export async function relayCompletion(response,res,{stream=false,model,format='o
         if(event.event==='token_usage')usage=mergeCompletionUsage(usage,{usage:data.usage??data});
         if(event.event==='done'){finish=data.finish_reason||'stop';terminal=true;}
       }else{const choice=data.choices?.[0];if(choice){delta=choice.delta||choice.message||{};if(choice.finish_reason){finish=choice.finish_reason;terminal=true;}}usage=mergeCompletionUsage(usage,data);}
+      if(onFirstOutput&&hasModelOutput(delta)){onFirstOutput();onFirstOutput=undefined;}
       if(delta.content)content+=delta.content;if(delta.reasoning_content)reasoning+=delta.reasoning_content;
       for(const tool of delta.tool_calls||[]){const index=tool.index??0;const old=tools[index]||{id:tool.id||'call-'+index,type:'function',function:{name:'',arguments:''}};if(tool.id)old.id=tool.id;if(tool.function?.name)old.function.name+=tool.function.name;if(tool.function?.arguments)old.function.arguments+=tool.function.arguments;tools[index]=old;}
       total+=JSON.stringify(delta).length;if(total>16*1024*1024)throw new ApiError('对话响应过大',502);

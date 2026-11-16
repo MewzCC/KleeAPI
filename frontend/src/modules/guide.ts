@@ -42,6 +42,7 @@ async function send() {
     if (typeof delta.content === 'string') content += delta.content
     if (typeof delta.reasoning_content === 'string') reasoning += delta.reasoning_content
     if (delta.tool_calls?.length) tools = true
+    if (props.platform === 'gateway' && requestModel.startsWith('auto/') && (content.trim() || reasoning || tools)) clearTimeout(timer)
     const bubble = bubbles.value[index]
     if (bubble) bubble.content = safe((reasoning ? '思考过程：\n' + reasoning + '\n\n' : '') + content || (tools ? '模型返回工具调用；测试窗不执行工具。' : '等待模型回复…'))
   }
