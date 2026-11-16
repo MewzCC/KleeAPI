@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { join, resolve, extname, dirname, sep, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-import { root } from '../klee-api/app/config.mjs';
+import { defaultChatRequestMaxMiB, root } from '../klee-api/app/config.mjs';
 import { downloadRuntimeFiles } from './setup-qoder-runtime.mjs';
 
 // 固定官方版本与校验值；升级时一并核对官方 SHASUMS256.txt 和 LICENSE。
@@ -99,7 +99,7 @@ export async function stageRelease({ source, destination, runtimeFiles }) {
   await put('licenses/frontend/dependencies.json', JSON.stringify(dependencies, null, 2) + '\n');
   await put('package.json', JSON.stringify({ name: 'klee-api', version: pkg.version, private: true, type: 'module', license: 'MIT',
     scripts: { start: 'node scripts/manager.mjs start', stop: 'node scripts/manager.mjs stop', status: 'node scripts/manager.mjs status' } }, null, 2) + '\n');
-  await put('klee-config.json', JSON.stringify({ workbuddy: { port: 18791 }, trae: { port: 17864, checkinAt: '03:00' }, qoder: { port: 17865 }, gateway: { port: 18887, aliases: {} } }, null, 2) + '\n');
+  await put('klee-config.json', JSON.stringify({ chatRequestMaxMiB: defaultChatRequestMaxMiB, workbuddy: { port: 18791 }, trae: { port: 17864, checkinAt: '03:00' }, qoder: { port: 17865 }, gateway: { port: 18887, aliases: {} } }, null, 2) + '\n');
   await put('先看这里.txt', '\uFEFFKleeAPI Windows x64 便携版 ' + pkg.version + '\r\n\r\n'
     + '1. 右键 ZIP → 全部解压，到桌面或自己的用户文件夹。不要在压缩包里直接双击运行。\r\n'
     + '2. 双击 Start-Manager.cmd，启动检查通过后自动打开管理页面。无需安装 Node.js、npm，也无需编译。\r\n'

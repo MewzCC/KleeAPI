@@ -350,7 +350,8 @@ export async function createService({platform,base=root,adapter=adapters[platfor
       if(req.method==='GET'&&path==='/api/pool')return json(res,200,await pool.snapshot({force:url.searchParams.get('refresh')==='1'}));
       if(req.method==='POST'&&path==='/api/pool/chat/completions'){
         poolRequest=true;
-        const input=await readBody(req,8*1024*1024),body=input?.request;
+        // The gateway already checks the public request limit. Allow room for the routing envelope and model ID rewrite.
+        const input=await readBody(req,config.chatRequestMaxBytes+64*1024),body=input?.request;
         if(typeof input?.uid!=='string'||!input.uid||!Array.isArray(body?.messages)||!body.messages.length||!body.messages.every(m=>m&&typeof m==='object'&&!Array.isArray(m)&&typeof m.role==='string')||typeof body.model!=='string'||!body.model.trim())throw new ApiError('需要 uid、model 和有效的非空 messages 数组');
         const controller=new AbortController();req.on('aborted',()=>controller.abort());res.on('close',()=>{if(!res.writableEnded)controller.abort();});
         const timer=setTimeout(()=>controller.abort(new DOMException('Response lifetime exceeded','TimeoutError')),poolTimeoutMs);let result;
@@ -396,7 +397,7 @@ export async function createService({platform,base=root,adapter=adapters[platfor
       if(login&&req.method==='GET')return json(res,200,await pollLogin(login[1]));
       if(login&&req.method==='DELETE'){pending.delete(login[1]);return json(res,200,{ok:true});}
       if(req.method==='POST'&&path==='/v1/chat/completions'){
-        const body=await readBody(req,8*1024*1024);if(!Array.isArray(body.messages)||!body.messages.length||!body.messages.every(m=>m&&typeof m==='object'&&!Array.isArray(m)&&typeof m.role==='string')||typeof body.model!=='string'||!body.model.trim())throw new ApiError('需要 model 和有效的非空 messages 数组');
+        const body=await readBody(req,config.chatRequestMaxBytes);if(!Array.isArray(body.messages)||!body.messages.length||!body.messages.every(m=>m&&typeof m==='object'&&!Array.isArray(m)&&typeof m.role==='string')||typeof body.model!=='string'||!body.model.trim())throw new ApiError('需要 model 和有效的非空 messages 数组');
         const controller=new AbortController();req.on('aborted',()=>controller.abort());res.on('close',()=>{if(!res.writableEnded)controller.abort();});
         const account=await fresh(store.selected()),response=await adapter.chat(account,body,{signal:controller.signal});return await relayCompletion(response,res,{stream:body.stream===true,model:body.model,format:adapter.streamFormat});
       }

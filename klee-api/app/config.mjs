@@ -2,6 +2,7 @@ import {readFileSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
 import {dirname,join} from 'node:path';
 export const root=dirname(dirname(dirname(fileURLToPath(import.meta.url))));
+export const defaultChatRequestMaxMiB=32;
 
 /** 统一端口配置仅控制回环监听，不能把管理接口绑定到任意网络地址。 */
 export function loadConfig(base=root){
@@ -13,6 +14,8 @@ export function loadConfig(base=root){
     if(!Number.isInteger(ports[platform])||ports[platform]<1||ports[platform]>65535||ports[platform]===18080)throw Error(platform+' 端口须为 1–65535 的整数，不能占用登录回调端口 18080');
   }
   if(new Set(Object.values(ports)).size!==Object.keys(ports).length)throw Error('各平台的端口不能相同');
+  const chatRequestMaxMiB=Object.hasOwn(input,'chatRequestMaxMiB')?input.chatRequestMaxMiB:defaultChatRequestMaxMiB;
+  if(!Number.isInteger(chatRequestMaxMiB)||chatRequestMaxMiB<1||chatRequestMaxMiB>128)throw Error('chatRequestMaxMiB 须为 1–128 的整数（MiB）');
   const aliases=Object.create(null),configured=input.gateway?.aliases??{};
   if(!configured||Array.isArray(configured)||typeof configured!=='object')throw Error('gateway.aliases 必须是模型别名对象');
   for(const [name,targets]of Object.entries(configured)){
@@ -21,5 +24,5 @@ export function loadConfig(base=root){
   }
   const checkinAt=input.trae?.checkinAt??null;
   if(checkinAt!==null&&(typeof checkinAt!=='string'||!/^([01]\d|2[0-3]):[0-5]\d$/.test(checkinAt)))throw Error('trae.checkinAt 必须为北京时间 HH:MM 或 null');
-  return {ports,callbackPort:18080,gateway:{aliases},trae:{checkinAt}};
+  return {ports,callbackPort:18080,chatRequestMaxBytes:chatRequestMaxMiB*1024*1024,gateway:{aliases},trae:{checkinAt}};
 }

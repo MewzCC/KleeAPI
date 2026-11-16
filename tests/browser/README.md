@@ -37,6 +37,8 @@ npx --yes --package @playwright/cli@0.1.24 playwright-cli run-code --filename=te
 npx --yes --package @playwright/cli@0.1.24 playwright-cli run-code --filename=tests/browser/mock-console.js
 npx --yes --package @playwright/cli@0.1.24 playwright-cli run-code --filename=tests/browser/check-usage-chart-expand.js
 npx --yes --package @playwright/cli@0.1.24 playwright-cli run-code --filename=tests/browser/mock-console.js
+npx --yes --package @playwright/cli@0.1.24 playwright-cli run-code --filename=tests/browser/check-usage-chart-theme.js
+npx --yes --package @playwright/cli@0.1.24 playwright-cli run-code --filename=tests/browser/mock-console.js
 npx --yes --package @playwright/cli@0.1.24 playwright-cli run-code --filename=tests/browser/check-auto-model-history.js
 npx --yes --package @playwright/cli@0.1.24 playwright-cli run-code --filename=tests/browser/mock-console.js
 npx --yes --package @playwright/cli@0.1.24 playwright-cli run-code --filename=tests/browser/check-onboarding.js
@@ -54,3 +56,5 @@ npx --yes --package @playwright/cli@0.1.24 playwright-cli close
 首次接入检查验证完整引导、保存失败重试、跨标签页同步完成状态、所有平台自动折叠、刷新后保持完成，以及手动展开后查看当前平台实际状态。
 
 路由检查验证四个平台在当前端口内切换，不重新请求页面文档；保留各平台搜索状态、导航折叠和主题设置，接口仍请求各自服务端口，并检查浏览器前进后退、门户入口与直接刷新。
+
+图表主题检查用 60 条模拟调用对比深色与可莉主题的画布主导色、纸张分隔色和提示框底色，并核对可莉主题下图表卡片的圆角、虚线分隔、四叶草标题、放大弹窗样式与 390 像素窄屏不溢出。所有数据均为模拟值。

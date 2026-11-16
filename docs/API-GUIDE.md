@@ -129,6 +129,8 @@ Authorization: Bearer klee-YOUR_API_KEY
 
 ## 对话参数
 
+聊天请求体上限默认是 32 MiB，按整份 JSON 的 UTF-8 字节数计算，包括历史消息、工具定义和内联附件。需要调大时，在 `klee-config.json` 顶层设置 `"chatRequestMaxMiB": 64`，保留原有配置，然后重启 KleeAPI。允许 1–128 的整数，适用于统一网关和平台直连的 `/v1/chat/completions`。超出上限返回 HTTP 413 `body_too_large`。模型的上下文容量由上游决定。
+
 ```json
 {
   "model": "MODEL_ID_FROM_CATALOG",

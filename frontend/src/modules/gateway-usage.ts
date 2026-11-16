@@ -1,6 +1,7 @@
 import type { EChartsOption } from 'echarts'
 import type { Platform } from '../types'
-import { names } from './session'
+// 显式扩展名让 Node 的单元测试也能直接加载本模块（tsconfig 已开启 allowImportingTsExtensions）。
+import { names } from './session.ts'
 
 export interface GatewayCall {
   id: string
@@ -106,29 +107,45 @@ export function usageTrend(records: GatewayCall[], metric: 'calls' | 'tokens' | 
   }
   const labels = [...days.keys()].sort()
   const rows = labels.map(day => days.get(day) ?? [])
-  const base = chartBase(light)
+  const skin = chartSkin(light)
+  const type = view.type ?? 'bar'
+  const stacked = view.stacked !== false
+  const base = chartBase(light, type)
+  const barStyle = type === 'line' ? {} : {
+    barMaxWidth: 26,
+    barCategoryGap: '42%',
+    itemStyle: { borderColor: skin.paper, borderWidth: stacked ? 1 : 0, borderRadius: stacked ? [3, 3, 0, 0] : [6, 6, 0, 0] },
+    emphasis: { itemStyle: { shadowBlur: 8, shadowColor: skin.shadow } },
+  }
+  // 柱体由浅到深渐变，避免大色块压过手账的柔和质感；折线保持纯色以突出走势。
+  const tinted = (index: number) => type === 'line' ? undefined : { ...barStyle.itemStyle, color: gradient(alpha(skin.palette[index % skin.palette.length], light ? .55 : .45), skin.palette[index % skin.palette.length], 'y') }
   return {
     ...base,
-    grid: { top: 34, left: 12, right: 30, bottom: view.expanded ? 60 : 10, containLabel: true },
-    dataZoom: view.expanded ? [{ type: 'slider', bottom: 4, height: 22, borderColor: light ? '#e7dac9' : '#2a3031', fillerColor: light ? '#b9383822' : '#a5ddc522', textStyle: base.textStyle, dataBackground: { lineStyle: { color: light ? '#b93838' : '#a5ddc5' }, areaStyle: { color: light ? '#b93838' : '#a5ddc5' } } }, { type: 'inside' }] : [],
-    legend: { top: 0, textStyle: base.textStyle },
-    xAxis: { type: 'category', data: labels, axisLabel: { hideOverlap: true, color: base.textStyle?.color } },
+    grid: { top: view.expanded ? 46 : 40, left: 12, right: 30, bottom: view.expanded ? 60 : 10, containLabel: true },
+    dataZoom: view.expanded ? [{ type: 'slider', bottom: 4, height: 22, borderColor: skin.axis, fillerColor: skin.filler, textStyle: { color: skin.text, fontFamily: skin.fontFamily }, dataBackground: { lineStyle: { color: skin.accent }, areaStyle: { color: skin.accent } }, handleStyle: { color: skin.paper, borderColor: skin.accent }, moveHandleStyle: { color: skin.filler } }, { type: 'inside' }] : [],
+    legend: { top: 0, icon: type === 'line' ? 'circle' : 'roundRect', itemWidth: 12, itemHeight: 8, itemGap: 16, textStyle: { color: skin.text, fontFamily: skin.fontFamily, fontSize: 11 }, inactiveColor: skin.inactive },
+    xAxis: { type: 'category', data: labels, axisLabel: { hideOverlap: true, color: skin.text, fontFamily: skin.fontFamily, fontSize: 11 }, axisLine: { lineStyle: { color: skin.axis } }, axisTick: { show: false } },
     yAxis: {
       type: 'value', minInterval: metric === 'credits' ? undefined : 1,
-      axisLabel: { color: base.textStyle?.color },
-      splitLine: { lineStyle: { color: light ? '#eee3d4' : '#2a3031' } },
+      axisLabel: { color: skin.text, fontFamily: skin.fontFamily, fontSize: 11 },
+      axisLine: { show: false }, axisTick: { show: false },
+      splitLine: { lineStyle: { color: skin.split, type: 'dashed' } },
     },
     series: metric === 'calls'
-      ? (Object.keys(callStatuses) as GatewayCall['status'][]).map(status => ({
-          name: callStatuses[status], type: view.type ?? 'bar', stack: view.stacked === false ? undefined : 'calls', barMaxWidth: 30,
-          label: { show: !!view.showValues, position: view.type === 'line' ? 'top' : 'inside', color: view.type === 'line' ? base.textStyle?.color : light ? '#fffdf8' : '#101314' },
+      ? (Object.keys(callStatuses) as GatewayCall['status'][]).map((status, index) => ({
+          name: callStatuses[status], type, stack: stacked ? 'calls' : undefined, ...barStyle,
+          itemStyle: tinted(index),
+          smooth: type === 'line', symbol: 'circle', symbolSize: 7, lineStyle: { width: 2.5 },
+          label: { show: !!view.showValues, position: type === 'line' ? 'top' : 'inside', color: type === 'line' ? skin.text : skin.labelOnBar, fontSize: 11, fontFamily: skin.fontFamily },
           data: rows.map(bucket => bucket.filter(row => row.status === status).length),
         }))
-      : (metric === 'tokens' ? ['tokens'] : ['reported', 'estimated']).map(source => ({
+      : (metric === 'tokens' ? ['tokens'] : ['reported', 'estimated']).map((source, index) => ({
           name: source === 'tokens' ? 'Token' : source === 'estimated' ? '积分（估算）' : '平台上报积分',
-          type: view.type ?? 'bar',
-          label: { show: !!view.showValues, position: 'top', color: base.textStyle?.color },
-          barMaxWidth: 30,
+          type,
+          smooth: type === 'line', symbol: 'circle', symbolSize: 7, lineStyle: { width: 2.5 },
+          ...barStyle,
+          itemStyle: tinted(index),
+          label: { show: !!view.showValues, position: 'top', color: skin.text, fontSize: 11, fontFamily: skin.fontFamily },
           data: rows.map(bucket => {
             const values = bucket
               .filter(row => metric !== 'credits' || creditGroup(row) === group)
@@ -149,23 +166,77 @@ export function rankUsageModels(records: GatewayCall[], limit = 8): [string, num
 /** 以请求模型名称为统计口径，默认显示调用次数前八名。 */
 export function usageModels(records: GatewayCall[], light: boolean, view: { limit?: number; showValues?: boolean; expanded?: boolean } = {}): EChartsOption {
   const top = rankUsageModels(records, view.limit)
-  const base = chartBase(light)
+  const skin = chartSkin(light)
+  const base = chartBase(light, 'bar')
   return {
     ...base,
-    grid: { top: 12, left: 12, right: view.showValues ? 48 : 24, bottom: 10, containLabel: true },
-    xAxis: { type: 'value', minInterval: 1, splitNumber: 3, axisLabel: { hideOverlap: true, color: base.textStyle?.color }, splitLine: { lineStyle: { color: light ? '#eee3d4' : '#2a3031' } } },
-    yAxis: { type: 'category', inverse: true, data: top.map(([model]) => model), axisLabel: { width: view.expanded ? 260 : 110, overflow: view.expanded ? 'break' : 'truncate', color: base.textStyle?.color } },
-    series: [{ type: 'bar', name: '调用次数', barMaxWidth: 18, label: { show: !!view.showValues, position: 'right', color: base.textStyle?.color }, data: top.map(([, count]) => count) }],
+    grid: { top: 12, left: 12, right: view.showValues ? 52 : 26, bottom: 10, containLabel: true },
+    xAxis: { type: 'value', minInterval: 1, splitNumber: 3, axisLabel: { hideOverlap: true, color: skin.text, fontFamily: skin.fontFamily, fontSize: 11 }, axisLine: { show: false }, axisTick: { show: false }, splitLine: { lineStyle: { color: skin.split, type: 'dashed' } } },
+    yAxis: { type: 'category', inverse: true, data: top.map(([model]) => model), axisLabel: { width: view.expanded ? 260 : 110, overflow: view.expanded ? 'break' : 'truncate', color: skin.text, fontFamily: skin.fontFamily, fontSize: 11 }, axisLine: { lineStyle: { color: skin.axis } }, axisTick: { show: false } },
+    series: [{
+      type: 'bar', name: '调用次数', barMaxWidth: 16, barCategoryGap: '38%',
+      itemStyle: { color: gradient(skin.barFrom, skin.barTo, 'x'), borderRadius: [0, 6, 6, 0] },
+      emphasis: { itemStyle: { shadowBlur: 8, shadowColor: skin.shadow } },
+      label: { show: !!view.showValues, position: 'right', color: skin.text, fontSize: 11, fontFamily: skin.fontFamily },
+      data: top.map(([, count]) => count),
+    }],
   }
 }
 
-function chartBase(light: boolean): EChartsOption {
+function gradient(from: string, to: string, axis: 'x' | 'y') {
+  return { type: 'linear' as const, x: 0, y: 0, x2: axis === 'x' ? 1 : 0, y2: axis === 'x' ? 0 : 1, colorStops: [{ offset: 0, color: from }, { offset: 1, color: to }] }
+}
+
+/** 把 #rrggbb 与透明度合成 rgba，让柱体渐变在两种主题下都保持柔和。 */
+function alpha(hex: string, opacity: number) {
+  const value = parseInt(hex.slice(1), 16)
+  return `rgba(${value >> 16 & 255}, ${value >> 8 & 255}, ${value & 255}, ${opacity})`
+}
+
+/** 两种外观共用同一套图表语义：可莉主题换成奶油纸张与手账配色，默认主题保持冷灰。 */
+interface ChartSkin {
+  palette: string[]
+  text: string
+  axis: string
+  split: string
+  paper: string
+  labelOnBar: string
+  accent: string
+  filler: string
+  inactive: string
+  shadow: string
+  barFrom: string
+  barTo: string
+  fontFamily: string
+}
+
+function chartSkin(light: boolean): ChartSkin {
+  return light
+    ? {
+        palette: ['#4c7d63', '#b3546a', '#c08a3e', '#7a6a94'],
+        text: '#846071', axis: '#e4c9d1', split: '#f0dde2', paper: '#fffdfb',
+        labelOnBar: '#fffdfb', accent: '#b34462', filler: '#b3446218', inactive: '#d9c2c9',
+        shadow: '#b3446233', barFrom: '#b3546a', barTo: '#d9a0ad', fontFamily: '"Segoe UI", "Microsoft YaHei", sans-serif',
+      }
+    : {
+        palette: ['#a5ddc5', '#e49c97', '#e1bc7b', '#9db4d8'],
+        text: '#98a3a3', axis: '#343c3d', split: '#2a3031', paper: '#181c1d',
+        labelOnBar: '#101314', accent: '#a5ddc5', filler: '#a5ddc518', inactive: '#4a5253',
+        shadow: '#00000055', barFrom: '#a5ddc5', barTo: '#5f8f7b', fontFamily: '"Segoe UI Variable", "Segoe UI", "Microsoft YaHei", sans-serif',
+      }
+}
+
+function chartBase(light: boolean, type: 'bar' | 'line'): EChartsOption {
+  const skin = chartSkin(light)
   return {
     animation: false,
-    color: light ? ['#42765a', '#b63136', '#936019'] : ['#a5ddc5', '#e49c97', '#e1bc7b'],
-    textStyle: { color: light ? '#796958' : '#98a3a3' },
+    color: skin.palette,
+    textStyle: { color: skin.text, fontFamily: skin.fontFamily },
     tooltip: {
-      trigger: 'axis', renderMode: 'richText', confine: true,
+      trigger: 'axis', renderMode: 'richText', confine: true, padding: [8, 12],
+      backgroundColor: skin.paper, borderColor: skin.axis, borderWidth: 1,
+      textStyle: { color: skin.text, fontFamily: skin.fontFamily, fontSize: 12, lineHeight: 20 },
+      axisPointer: { type: type === 'line' ? 'line' : 'shadow', shadowStyle: { color: skin.filler }, lineStyle: { color: skin.axis, width: 1 } },
       valueFormatter: value => typeof value === 'number' ? formatUsage(value) : '未上报',
     },
   }

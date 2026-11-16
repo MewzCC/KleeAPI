@@ -1055,7 +1055,7 @@ export async function createGateway({
         );
       }
       if (req.method === "POST" && path === "/v1/chat/completions") {
-        const body = await readBody(req, 8 * 1024 * 1024);
+        const body = await readBody(req, config.chatRequestMaxBytes);
         if (
           !body ||
           Array.isArray(body) ||
