@@ -58,14 +58,53 @@ export interface UsageSettings {
 }
 
 export const callStatuses = { success: '成功', failed: '失败', canceled: '已取消' }
-export const platformName = (row: GatewayCall) => row.platform ? names[row.platform] : '未路由'
+export const platformName = (row: Pick<GatewayCall, 'platform'>) => row.platform ? names[row.platform] : '未路由'
 export const regionName = (region: string | null) => region === 'cn' ? '国内版' : region === 'global' ? '国际版' : '未知地区'
 export const creditGroup = (row: GatewayCall) => platformName(row) + ' · ' + regionName(row.region)
 export const formatUsage = (value: number | null) => value === null
   ? '未上报'
   : value.toLocaleString('zh-CN', { maximumFractionDigits: 6 })
-export const hasCreditEstimate = (row: GatewayCall) => row.credits === null && typeof row.estimatedCredits === 'number' && Number.isFinite(row.estimatedCredits)
+export const hasCreditEstimate = (row: Pick<GatewayCall, 'credits' | 'estimatedCredits'>) => row.credits === null && typeof row.estimatedCredits === 'number' && Number.isFinite(row.estimatedCredits)
 export const creditText = (row: GatewayCall) => row.credits !== null ? formatUsage(row.credits) : hasCreditEstimate(row) ? formatUsage(row.estimatedCredits!) + '（估算）' : '暂无数据'
+
+export const isAutoUsageModel = (model: string) => model.startsWith('auto/')
+
+/** 按已记录的实际尝试归属用量。同一请求重试时，每次尝试都单独计数。 */
+export function summarizeAutoModelUsage(records: GatewayCall[], groupId: string) {
+  const requests = records.filter(row => row.model === groupId)
+  const byModel = new Map<string, GatewayRouteAttempt[]>()
+  let untrackedRequests = 0
+  for (const request of requests) {
+    // 旧记录未保存路径时，最后返回的上游名无法还原完整的尝试归属。
+    const attempts = request.routeAttempts ?? []
+    if (attempts.length < request.attempts) untrackedRequests++
+    for (const attempt of attempts) {
+      const rows = byModel.get(attempt.model)
+      if (rows) rows.push(attempt)
+      else byModel.set(attempt.model, [attempt])
+    }
+  }
+  const models = [...byModel].map(([model, attempts]) => {
+    const first = attempts[0]!
+    const totals = (values: (number | null | undefined)[]) => {
+      const known = values.filter((value): value is number => typeof value === 'number' && Number.isFinite(value))
+      return { value: known.length ? known.reduce((sum, value) => sum + value, 0) : null, count: known.length }
+    }
+    return {
+      model,
+      platform: platformName(first),
+      region: regionName(first.region),
+      attempts: attempts.length,
+      success: attempts.filter(row => row.status === 'success').length,
+      failed: attempts.filter(row => row.status === 'failed').length,
+      canceled: attempts.filter(row => row.status === 'canceled').length,
+      tokens: totals(attempts.map(row => row.totalTokens)),
+      credits: totals(attempts.map(row => row.credits)),
+      estimatedCredits: totals(attempts.map(row => hasCreditEstimate(row) ? row.estimatedCredits : null)),
+    }
+  }).sort((a, b) => b.attempts - a.attempts || a.model.localeCompare(b.model))
+  return { requests: requests.length, untrackedRequests, attempts: models.reduce((sum, model) => sum + model.attempts, 0), models }
+}
 
 const dayLabel = (timestamp: number) => new Date(timestamp).toLocaleDateString('sv-SE')
 
@@ -110,13 +149,15 @@ export function usageTrend(records: GatewayCall[], metric: 'calls' | 'tokens' | 
   const skin = chartSkin(light)
   const type = view.type ?? 'bar'
   const stacked = view.stacked !== false
-  const base = chartBase(light, type)
+  const base = chartBase(light, type, metric === 'calls' ? '次' : metric === 'tokens' ? 'Token' : '')
   const barStyle = type === 'line' ? {} : {
     barMaxWidth: 26,
     barCategoryGap: '42%',
     itemStyle: { borderColor: skin.paper, borderWidth: stacked ? 1 : 0, borderRadius: stacked ? [3, 3, 0, 0] : [6, 6, 0, 0] },
-    emphasis: { itemStyle: { shadowBlur: 8, shadowColor: skin.shadow } },
   }
+  const emphasis = (index: number) => type === 'bar'
+    ? barEmphasis(skin.palette[index % skin.palette.length]!)
+    : { focus: 'none' as const, lineStyle: { width: 3.5 } }
   // 柱体由浅到深渐变，避免大色块压过手账的柔和质感；折线保持纯色以突出走势。
   const tinted = (index: number) => type === 'line' ? undefined : { ...barStyle.itemStyle, color: gradient(alpha(skin.palette[index % skin.palette.length], light ? .55 : .45), skin.palette[index % skin.palette.length], 'y') }
   return {
@@ -135,6 +176,7 @@ export function usageTrend(records: GatewayCall[], metric: 'calls' | 'tokens' | 
       ? (Object.keys(callStatuses) as GatewayCall['status'][]).map((status, index) => ({
           name: callStatuses[status], type, stack: stacked ? 'calls' : undefined, ...barStyle,
           itemStyle: tinted(index),
+          emphasis: emphasis(index),
           smooth: type === 'line', symbol: 'circle', symbolSize: 7, lineStyle: { width: 2.5 },
           label: { show: !!view.showValues, position: type === 'line' ? 'top' : 'inside', color: type === 'line' ? skin.text : skin.labelOnBar, fontSize: 11, fontFamily: skin.fontFamily },
           data: rows.map(bucket => bucket.filter(row => row.status === status).length),
@@ -145,6 +187,7 @@ export function usageTrend(records: GatewayCall[], metric: 'calls' | 'tokens' | 
           smooth: type === 'line', symbol: 'circle', symbolSize: 7, lineStyle: { width: 2.5 },
           ...barStyle,
           itemStyle: tinted(index),
+          emphasis: emphasis(index),
           label: { show: !!view.showValues, position: 'top', color: skin.text, fontSize: 11, fontFamily: skin.fontFamily },
           data: rows.map(bucket => {
             const values = bucket
@@ -176,7 +219,7 @@ export function usageModels(records: GatewayCall[], light: boolean, view: { limi
     series: [{
       type: 'bar', name: '调用次数', barMaxWidth: 16, barCategoryGap: '38%',
       itemStyle: { color: gradient(skin.barFrom, skin.barTo, 'x'), borderRadius: [0, 6, 6, 0] },
-      emphasis: { itemStyle: { shadowBlur: 8, shadowColor: skin.shadow } },
+      emphasis: barEmphasis(skin.palette[0]!),
       label: { show: !!view.showValues, position: 'right', color: skin.text, fontSize: 11, fontFamily: skin.fontFamily },
       data: top.map(([, count]) => count),
     }],
@@ -193,10 +236,19 @@ function alpha(hex: string, opacity: number) {
   return `rgba(${value >> 16 & 255}, ${value >> 8 & 255}, ${value & 255}, ${opacity})`
 }
 
-/** 两种外观共用同一套图表语义：可莉主题换成奶油纸张与手账配色，默认主题保持冷灰。 */
+function barEmphasis(hex: string) {
+  const value = parseInt(hex.slice(1), 16)
+  const brighten = (channel: number) => Math.round(channel + (255 - channel) * .15)
+  const color = `rgb(${brighten(value >> 16 & 255)}, ${brighten(value >> 8 & 255)}, ${brighten(value & 255)})`
+  // 同色描边只将柱体外扩约 1px，不改变堆叠高度或数据刻度。
+  return { focus: 'none' as const, itemStyle: { color, borderColor: color, borderWidth: 2, shadowBlur: 0 } }
+}
+
+/** 两种外观共用同一套图表语义：可莉主题以玫瑰粉为主色，默认主题保持冷灰。 */
 interface ChartSkin {
   palette: string[]
   text: string
+  ink: string
   axis: string
   split: string
   paper: string
@@ -213,31 +265,58 @@ interface ChartSkin {
 function chartSkin(light: boolean): ChartSkin {
   return light
     ? {
-        palette: ['#4c7d63', '#b3546a', '#c08a3e', '#7a6a94'],
-        text: '#846071', axis: '#e4c9d1', split: '#f0dde2', paper: '#fffdfb',
+        // 可莉主题以玫瑰粉为主色：趋势图“成功”与“模型调用量”同色，两图观感一致。
+        palette: ['#b3546a', '#7a6a94', '#c08a3e', '#4c7d63'],
+        text: '#846071', ink: '#784559', axis: '#e4c9d1', split: '#f0dde2', paper: '#fffdfb',
         labelOnBar: '#fffdfb', accent: '#b34462', filler: '#b3446218', inactive: '#d9c2c9',
-        shadow: '#b3446233', barFrom: '#b3546a', barTo: '#d9a0ad', fontFamily: '"Segoe UI", "Microsoft YaHei", sans-serif',
+        shadow: '#b3446233', barFrom: '#c9768a', barTo: '#b3546a', fontFamily: '"Segoe UI", "Microsoft YaHei", sans-serif',
       }
     : {
         palette: ['#a5ddc5', '#e49c97', '#e1bc7b', '#9db4d8'],
-        text: '#98a3a3', axis: '#343c3d', split: '#2a3031', paper: '#181c1d',
+        text: '#98a3a3', ink: '#edf3f0', axis: '#343c3d', split: '#2a3031', paper: '#181c1d',
         labelOnBar: '#101314', accent: '#a5ddc5', filler: '#a5ddc518', inactive: '#4a5253',
         shadow: '#00000055', barFrom: '#a5ddc5', barTo: '#5f8f7b', fontFamily: '"Segoe UI Variable", "Segoe UI", "Microsoft YaHei", sans-serif',
       }
 }
 
-function chartBase(light: boolean, type: 'bar' | 'line'): EChartsOption {
+// 模型名来自调用记录，HTML 提示卡必须先转义再插入。
+function escapeTooltip(value: string) {
+  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')
+}
+
+function chartBase(light: boolean, type: 'bar' | 'line', unit = '次'): EChartsOption {
   const skin = chartSkin(light)
   return {
     animation: false,
     color: skin.palette,
     textStyle: { color: skin.text, fontFamily: skin.fontFamily },
     tooltip: {
-      trigger: 'axis', renderMode: 'richText', confine: true, padding: [8, 12],
+      trigger: 'axis', renderMode: 'html', confine: true, padding: [12, 14],
+      className: 'usage-chart-tooltip' + (light ? ' is-klee' : ''),
+      enterable: false, transitionDuration: 0, hideDelay: 0,
       backgroundColor: skin.paper, borderColor: skin.axis, borderWidth: 1,
-      textStyle: { color: skin.text, fontFamily: skin.fontFamily, fontSize: 12, lineHeight: 20 },
-      axisPointer: { type: type === 'line' ? 'line' : 'shadow', shadowStyle: { color: skin.filler }, lineStyle: { color: skin.axis, width: 1 } },
-      valueFormatter: value => typeof value === 'number' ? formatUsage(value) : '未上报',
+      textStyle: { color: skin.ink, fontFamily: skin.fontFamily, fontSize: 12, lineHeight: 20 },
+      extraCssText: `border-radius:12px;box-shadow:0 8px 24px ${skin.shadow};white-space:normal;min-width:156px;max-width:min(300px, calc(100% - 16px));box-sizing:border-box;--usage-tooltip-muted:${skin.text};--usage-tooltip-rule:${skin.split};`,
+      formatter: params => {
+        const items = Array.isArray(params) ? params : [params]
+        if (!items.length) return ''
+        const title = escapeTooltip(String(items[0]!.name ?? ''))
+        const rows = items.map(item => {
+          const known = typeof item.value === 'number' && Number.isFinite(item.value)
+          const value = known ? formatUsage(item.value as number) : '未上报'
+          const color = skin.palette[(item.seriesIndex ?? 0) % skin.palette.length]
+          return `<div class="usage-tooltip-row"><span class="usage-tooltip-dot" style="background:${color}"></span><span class="usage-tooltip-label">${escapeTooltip(item.seriesName ?? '')}</span><span class="usage-tooltip-value"><strong>${value}</strong>${known && unit ? `<small>${unit}</small>` : ''}</span></div>`
+        }).join('')
+        return `<div class="usage-tooltip-title">${title}</div><div class="usage-tooltip-rows">${rows}</div>`
+      },
+      position: (point, _params, _element, _rect, size) => {
+        const [width, height] = size.contentSize
+        const [viewWidth, viewHeight] = size.viewSize
+        const x = point[0] + width + 20 <= viewWidth ? point[0] + 12 : point[0] - width - 12
+        const y = point[1] - height - 12 >= 8 ? point[1] - height - 12 : point[1] + 12
+        return [Math.max(8, Math.min(x, viewWidth - width - 8)), Math.max(8, Math.min(y, viewHeight - height - 8))]
+      },
+      axisPointer: { type: type === 'bar' ? 'none' : 'line', lineStyle: { color: alpha(skin.accent, .4), width: 1, type: 'dashed' } },
     },
   }
 }

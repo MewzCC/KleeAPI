@@ -1,12 +1,16 @@
 async (page) => {
+  page.setDefaultTimeout(5000);
   const assert = (condition, message) => { if (!condition) throw new Error(message); };
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
-  const models = Array.from({ length: 25 }, (_, i) => ({ id: 'demo/model-' + String(i + 1).padStart(2, '0'), name: 'Demo Model ' + (i + 1), availableAccounts: i === 24 ? 0 : 2, canonicalIds: [i === 24 ? 'canonical-needle' : 'original-' + (i + 1)] }));
+  const models = Array.from({ length: 25 }, (_, i) => ({ id: 'demo/model-' + String(i + 1).padStart(2, '0'), name: 'Demo Model ' + (i + 1), availableAccounts: i === 24 ? 0 : 2, canonicalIds: [i === 23 ? 'canonical-needle' : 'original-' + (i + 1)] }));
   let current = models;
   await page.context().route('**/api/gateway/status*', route => route.fulfill({ json: { accounts: [], platforms: [], models: current, fetchedAt: Date.now() } }));
   await page.context().route('**/v1/models*', route => route.fulfill({ json: { data: current, source: 'account', fetchedAt: Date.now() } }));
+  await page.context().route('**/api/accounts', route => route.fulfill({ json: { accounts: [] } }));
   await page.context().addInitScript(() => {
+    sessionStorage.setItem('klee.gateway', 'klee-model-filter-test');
+    sessionStorage.setItem('klee.qoder', 'klee-model-filter-test');
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async text => { window.__copiedModel = text; } } });
   });
   const rows = () => page.locator('.model-table .el-table__body-wrapper tbody tr');
@@ -21,18 +25,20 @@ async (page) => {
     await rows().filter({ hasText: 'demo/model-01' }).waitFor();
     assert(await rows().count() === 10, platform + ': render only the first 10 models');
     await pageNumber(3).click();
-    await rows().filter({ hasText: 'demo/model-25' }).waitFor();
-    assert(await rows().count() === 5, platform + ': last page contains the remaining 5 models');
+    await rows().filter({ hasText: 'demo/model-24' }).waitFor();
+    assert(await rows().count() === 4, platform + ': last page contains four available models');
+    assert(await rows().filter({ hasText: 'demo/model-25' }).count() === 0, 'Unavailable models are hidden');
+    await search().fill('demo/model-25');
+    await page.getByText('没有可展示的模型，请刷新目录或检查搜索条件。', { exact: true }).waitFor();
     await search().fill('canonical-needle');
     await page.waitForFunction(() => document.querySelectorAll('.model-table .el-table__body-wrapper tbody tr').length === 1);
-    assert((await rows().innerText()).includes('demo/model-25'), 'Canonical ID search must cover every page');
+    assert((await rows().innerText()).includes('demo/model-24'), 'Canonical ID search must cover every page');
     assert(await pageNumber(1).getAttribute('aria-current') === 'true', 'Search returns to page 1');
     await rows().getByRole('button', { name: '复制 ID', exact: true }).click();
-    assert(await page.evaluate(() => window.__copiedModel) === 'demo/model-25', 'Copy preserves the complete ID');
-    if (platform === 'gateway') assert((await rows().innerText()).includes('0'), 'Zero available accounts must stay zero');
+    assert(await page.evaluate(() => window.__copiedModel) === 'demo/model-24', 'Copy preserves the complete ID');
     await rows().getByRole('button', { name: '用于 API 示例 →', exact: true }).click();
     await page.getByRole('heading', { name: 'API 接入指南' }).waitFor();
-    assert((await page.locator('pre').first().innerText()).includes('demo/model-25'), 'Selected row carries its ID to API examples');
+    assert((await page.locator('pre').first().innerText()).includes('demo/model-24'), 'Selected row carries its ID to API examples');
     await page.getByRole('button', { name: '模型目录', exact: true }).click();
     await search().fill('no-such-model');
     await page.getByText('没有可展示的模型，请刷新目录或检查搜索条件。', { exact: true }).waitFor();
@@ -58,5 +64,5 @@ async (page) => {
     }
   }
   assert(errors.length === 0, 'Browser runtime errors: ' + errors.join('; '));
-  return 'PASS: gateway and platform table pagination, cross-page search, empty state, refresh clamp, page size, copy/example actions, both mobile themes; zero runtime errors.';
+  return 'PASS: unavailable-model filtering, gateway and platform table pagination, cross-page search, empty state, refresh clamp, page size, copy/example actions, both mobile themes; zero runtime errors.';
 }

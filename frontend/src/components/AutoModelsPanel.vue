@@ -8,7 +8,7 @@ import { editableGroup, modelPlatform, modelPlatformName, newAutoGroup, validate
 import ConsoleIcon from './ConsoleIcon.vue'
 import { readMotionPaused } from '../modules/decoration'
 
-const emit = defineEmits<{ changed: [] }>()
+const emit = defineEmits<{ changed: []; usage: [model: string] }>()
 const snapshot = ref<AutoSnapshot>()
 const loading = ref(false), changing = ref(false), error = ref(''), formError = ref('')
 const draft = ref<AutoGroup>(), editingId = ref(''), baseline = ref('')
@@ -26,7 +26,7 @@ const dirty = computed(() => !!draft.value && JSON.stringify(editableGroup(draft
 const groups = computed(() => snapshot.value?.groups || [])
 const connected = computed(() => !!session.keys.gateway)
 const blocked = computed(() => changing.value || loading.value || !connected.value || !snapshot.value || !!snapshot.value.warning)
-const catalog = computed(() => (snapshot.value?.models || []).filter(model => !model.id.startsWith('auto/')))
+const catalog = computed(() => (snapshot.value?.models || []).filter(model => !model.id.startsWith('auto/') && model.availableAccounts > 0))
 const platforms = computed(() => [...new Set(catalog.value.map(model => modelPlatform(model.id)))])
 const filteredModels = computed(() => catalog.value.filter(model => (platform.value === 'all' || modelPlatform(model.id) === platform.value) && `${model.id} ${model.name || ''}`.toLowerCase().includes(search.value.toLowerCase())))
 const visibleModels = computed(() => catalogExpanded.value ? filteredModels.value : filteredModels.value.slice(0, catalogLimit))
@@ -192,7 +192,7 @@ async function remove(group: AutoGroup) {
           <div class="auto-group-top"><h3>{{ group.name }}</h3><el-tag :type="group.enabled ? 'success' : 'info'" effect="plain">{{ group.enabled ? '已启用' : '已停用' }}</el-tag></div>
           <code>{{ group.id }}</code><p class="muted">{{ group.targets.filter(target => target.enabled).length }} / {{ group.targets.length }} 个候选启用 · 按优先级尝试</p>
           <div class="auto-group-route"><span v-for="(target, index) in group.targets.slice(0, 3)" :key="target.model" :class="{ disabled: !target.enabled }">{{ index + 1 }}. {{ target.model }}</span><small v-if="group.targets.length > 3">还有 {{ group.targets.length - 3 }} 个候选</small></div>
-          <div class="auto-group-actions"><el-button :disabled="blocked" @click="edit(group)">编辑</el-button><el-button text @click="copy(group.id)">复制 ID</el-button><el-button text :disabled="blocked || (editingId === group.id && dirty)" @click="toggle(group)">{{ group.enabled ? '停用' : '启用' }}</el-button><el-button text type="danger" :disabled="blocked" @click="remove(group)">删除</el-button></div>
+          <div class="auto-group-actions"><el-button :disabled="blocked" @click="edit(group)">编辑</el-button><el-button text @click="copy(group.id)">复制 ID</el-button><el-button text type="primary" @click="emit('usage', group.id)">查看用量</el-button><el-button text :disabled="blocked || (editingId === group.id && dirty)" @click="toggle(group)">{{ group.enabled ? '停用' : '启用' }}</el-button><el-button text type="danger" :disabled="blocked" @click="remove(group)">删除</el-button></div>
         </article>
       </section>
 

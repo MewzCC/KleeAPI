@@ -8,7 +8,7 @@ import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { loadConfig, root } from "./config.mjs";
 import { atomicWrite } from "./store.mjs";
 import { ApiError, json, readBody, upstreamFetch } from "./http.mjs";
-import { hasModelOutput, mergeCompletionUsage, parseEvents } from "./stream.mjs";
+import { hasModelOutput, mergeCompletionUsage, parseEvents, qoderResourceLimitError } from "./stream.mjs";
 import { createUsageLog, usageFields } from "./gateway-usage.mjs";
 import { captureConversation } from "./conversation.mjs";
 import { checkinTarget } from "./checkin.mjs";
@@ -17,6 +17,7 @@ import { createAutoModelStore } from './auto-models.mjs';
 const platforms = { workbuddy: "WorkBuddy", trae: "Trae", qoder: "Qoder" };
 const keyPattern = /^klee-[\x21-\x7e]{3,251}$/;
 const reservedModel = /^(workbuddy|trae|qoder)\//;
+const qoderResourceCooldownMs = 30000;
 const eligible = (a) =>
   a.enabled === true &&
   a.status === "ready" &&
@@ -125,7 +126,7 @@ async function write(res, value, signal) {
 }
 
 /** 只改写 OpenAI 帧的 model；保留 choices、工具调用、usage 和结束标志。 */
-async function relay(response, res, request, signal, observe, strict = false, onFirstOutput) {
+async function relay(response, res, request, signal, observe, strict = false, onFirstOutput, platform) {
   if (
     !(response.headers.get("content-type") || "").includes("text/event-stream")
   ) {
@@ -198,6 +199,7 @@ async function relay(response, res, request, signal, observe, strict = false, on
       );
     }
     if (strict && data && typeof data === 'object') observe(data, false);
+    if (platform === 'qoder' && data?.error?.code === 'qoder_resource_limit') throw qoderResourceLimitError();
     if (
       !data ||
       typeof data !== "object" ||
@@ -277,6 +279,11 @@ export async function createGateway({
   const usageLog = createUsageLog(memoryKey ? undefined : join(base, "Gateway-Chat", "data", "Gateway", "usage.json"));
   const autoModels = createAutoModelStore(memoryKey ? undefined : join(base, 'Gateway-Chat', 'data', 'Gateway', 'auto-models.json'));
   const autoHealth = new Map();
+  const qoderModelCooldowns = new Map();
+  const candidateCooldownUntil = candidate => Math.max(
+    qoderModelCooldowns.get(candidate.canonicalId) ?? 0,
+    autoHealth.get(candidateId(candidate))?.cooldownUntil ?? 0,
+  );
   const logLabel = (value) => String(value ?? "")
     .replace(/klee-[^\s]+/gi, "[Key 已隐藏]")
     .replace(/[\x00-\x1f\x7f]/g, " ")
@@ -544,17 +551,21 @@ export async function createGateway({
       const targets = group.targets.filter(t => t.enabled);
       logical.set(group.id, { id: group.id, name: group.name, auto: true, canonicalIds: targets.map(t => t.model), candidates: targets.flatMap(t => canonical.get(t.model)?.candidates ?? []) });
     }
+    const now = Date.now();
     const models = [...logical.values()]
-      .filter((m) => m.candidates.length || m.auto)
-      .map((m) => ({
-        id: m.id,
-        object: "model",
-        owned_by: "klee",
-        ...(m.name ? { name: m.name } : {}),
-        canonicalIds: m.canonicalIds,
-        availableAccounts: m.auto ? new Set(m.candidates.map(c => accountId(c.account))).size : m.candidates.length,
-        ...(m.auto ? { auto: true } : {}),
-      }));
+      .map((m) => {
+        const candidates = m.candidates.filter(candidate => candidateCooldownUntil(candidate) <= now);
+        return {
+          id: m.id,
+          object: "model",
+          owned_by: "klee",
+          ...(m.name ? { name: m.name } : {}),
+          canonicalIds: m.canonicalIds,
+          availableAccounts: m.auto ? new Set(candidates.map(c => accountId(c.account))).size : candidates.length,
+          ...(m.auto ? { auto: true } : {}),
+        };
+      })
+      .filter(model => model.availableAccounts > 0);
     return {
       logical,
       models,
@@ -572,13 +583,14 @@ export async function createGateway({
     const groups = state.groups.map(group => ({ ...group, targets: group.targets.map(target => {
       const candidates = data.logical.get(target.model)?.candidates ?? [];
       const health = [...autoHealth].filter(([, value]) => value.model === target.model).map(([, value]) => value);
-      const availableAccounts = candidates.filter(c => (autoHealth.get(candidateId(c))?.cooldownUntil ?? 0) <= Date.now()).length;
+      const candidateCooldowns = candidates.map(candidateCooldownUntil);
+      const availableAccounts = candidateCooldowns.filter(until => until <= Date.now()).length;
       return { ...target, availableAccounts,
-        cooldownUntil: candidates.length && !availableAccounts ? Math.min(...candidates.map(c => autoHealth.get(candidateId(c))?.cooldownUntil ?? 0)) : 0,
+        cooldownUntil: candidates.length && !availableAccounts ? Math.min(...candidateCooldowns) : 0,
         lastSuccessAt: Math.max(0, ...health.map(h => h.lastSuccessAt ?? 0)), lastFailureAt: Math.max(0, ...health.map(h => h.lastFailureAt ?? 0)),
         errorCode: health.sort((a, b) => (b.lastFailureAt ?? 0) - (a.lastFailureAt ?? 0))[0]?.errorCode ?? null };
     }) }));
-    const models = [...data.logical.values()].filter(m => m.id === m.canonicalIds[0] && reservedModel.test(m.id)).map(m => ({ id: m.id, name: m.name, availableAccounts: m.candidates.length }));
+    const models = data.models.filter(model => model.id === model.canonicalIds[0] && reservedModel.test(model.id));
     return { groups, warning: state.warning, models };
   }
 
@@ -645,6 +657,7 @@ export async function createGateway({
             model?.candidates.filter(
               (c) => !waiter.tried.has(waiter.autoGroup ? candidateId(c) : accountId(c.account)),
             ) || [];
+          const now = Date.now();
           if (!error && !remaining.length)
             error =
               (waiter.autoGroup ? new ApiError('自动模型组的所有可用候选均调用失败', 503, 'auto_models_exhausted') : waiter.lastError) ||
@@ -653,6 +666,13 @@ export async function createGateway({
                 503,
                 "no_available_account",
               );
+          if (!error && !waiter.autoGroup) {
+            const firstReadyAt = Math.min(...remaining.map(c => qoderModelCooldowns.get(c.canonicalId) ?? 0));
+            if (firstReadyAt > now) {
+              error = qoderResourceLimitError();
+              error.retryAfterSeconds = Math.ceil((firstReadyAt - now) / 1000);
+            }
+          }
           if (error) {
             removeWaiter(waiter);
             waiter.reject(error);
@@ -663,8 +683,9 @@ export async function createGateway({
               (c) =>
                 !c.account.inFlight &&
                 !busy.get(accountId(c.account)) &&
-                (cooldowns.get(accountId(c.account)) || 0) <= Date.now() &&
-                (!waiter.autoGroup || (autoHealth.get(candidateId(c))?.cooldownUntil ?? 0) <= Date.now()),
+                (cooldowns.get(accountId(c.account)) || 0) <= now &&
+                (qoderModelCooldowns.get(c.canonicalId) ?? 0) <= now &&
+                (!waiter.autoGroup || (autoHealth.get(candidateId(c))?.cooldownUntil ?? 0) <= now),
             )
             .sort(
               (a, b) => (waiter.autoGroup ?
@@ -679,7 +700,8 @@ export async function createGateway({
           turns.set(id, ++sequence);
           removeWaiter(waiter);
           if (waiter.autoGroup) {
-            const pendingModels = new Set(remaining.filter(c => !waiter.modelTries.has(c.canonicalId)).map(c => c.canonicalId));
+            const pendingModels = new Set(remaining.filter(c => !waiter.modelTries.has(c.canonicalId) &&
+              (qoderModelCooldowns.get(c.canonicalId) ?? 0) <= now).map(c => c.canonicalId));
             pendingModels.add(candidate.canonicalId);
             waiter.resolve({ ...candidate, remainingModelCount: pendingModels.size });
           } else waiter.resolve(candidate);
@@ -816,25 +838,26 @@ export async function createGateway({
             },
           );
           if (!response.ok) {
-            const data = await responseJSON(response, signal).catch(
-                () => null,
-              ),
-              code = [
+            const data = await responseJSON(response, signal).catch(() => null);
+            const platformCode = data?.error?.code;
+            const channelRejected = candidate.account.platform === 'workbuddy' &&
+              (platformCode === '11128' || platformCode === 11128);
+            const code = [
                 "account_busy",
                 "no_available_account",
                 "upstream_rate_limited",
-              ].includes(data?.error?.code)
-                ? data.error.code
+              ].includes(platformCode)
+                ? platformCode
                 : "platform_chat_error";
             if (autoGroup && data && typeof data === 'object') usage = mergeCompletionUsage(usage, data);
             if (signal.aborted) throw abortError(signal);
-            lastError = new ApiError(
-              "Platform rejected the completion (HTTP " + response.status + ")",
-              response.status >= 400 && response.status <= 599
-                ? response.status
-                : 502,
-              code,
-            );
+            if (candidate.account.platform === 'qoder' && response.status === 429 && platformCode === 'qoder_resource_limit')
+              throw qoderResourceLimitError();
+            if (channelRejected) {
+              throw new ApiError('WorkBuddy 拒绝当前调用渠道（上游错误 11128）。可在 Harness 切换到自动模型组。', 403, 'workbuddy_channel_rejected');
+            }
+            const status = response.status >= 400 && response.status <= 599 ? response.status : 502;
+            lastError = new ApiError('Platform rejected the completion (HTTP ' + response.status + ')', status, code);
             if (autoGroup) throw lastError;
             // 平台明确因账号竞争拒绝且尚未生成时重新排队；短暂冷却避免快照竞争导致紧密重试。
             if (
@@ -858,14 +881,22 @@ export async function createGateway({
             clearTimeout(attemptTimer);
             clearTimeout(timer);
             attemptRecord.firstOutputMs = Math.round(performance.now() - attemptStarted);
-          } : undefined);
+          } : undefined, candidate.account.platform);
           if (autoGroup) {
             autoHealth.set(candidateId(candidate), { model: candidate.canonicalId, lastSuccessAt: Date.now(), cooldownUntil: 0, errorCode: null });
           }
           return;
         } catch (error) {
-          if (!autoGroup) throw error;
           const failure = signal.aborted ? abortError(signal) : error;
+          const qoderLimited = failure.code === 'qoder_resource_limit';
+          if (qoderLimited) {
+            const model = candidate.canonicalId;
+            qoderModelCooldowns.delete(model);
+            if (qoderModelCooldowns.size >= 5000) qoderModelCooldowns.delete(qoderModelCooldowns.keys().next().value);
+            qoderModelCooldowns.set(model, Date.now() + qoderResourceCooldownMs);
+            failure.retryAfterSeconds = qoderResourceCooldownMs / 1000;
+          }
+          if (!autoGroup) throw error;
           lastError = failure;
           attemptRecord.status = controller.signal.aborted && abortError(controller.signal).status === 499 ? 'canceled' : 'failed';
           attemptRecord.httpStatus = failure instanceof ApiError ? failure.status : 502;
@@ -873,7 +904,7 @@ export async function createGateway({
           const retryable = canAutoRetry(failure, autoGroup);
           if (!controller.signal.aborted) {
             if (autoHealth.size >= 5000) autoHealth.delete(autoHealth.keys().next().value);
-            autoHealth.set(candidateId(candidate), { ...autoHealth.get(candidateId(candidate)), model: candidate.canonicalId, lastFailureAt: Date.now(), errorCode: attemptRecord.errorCode, cooldownUntil: retryable ? Date.now() + autoGroup.cooldownMs : 0 });
+            autoHealth.set(candidateId(candidate), { ...autoHealth.get(candidateId(candidate)), model: candidate.canonicalId, lastFailureAt: Date.now(), errorCode: attemptRecord.errorCode, cooldownUntil: retryable && !qoderLimited ? Date.now() + autoGroup.cooldownMs : 0 });
           }
           if (controller.signal.aborted || res.headersSent || res.destroyed || !retryable) throw failure;
         } finally {
@@ -1084,11 +1115,13 @@ export async function createGateway({
       const message =
           error instanceof ApiError ? error.message : "Gateway request failed",
         code = error instanceof ApiError ? error.code : "gateway_error";
-      if (!res.headersSent && !res.destroyed)
+      if (!res.headersSent && !res.destroyed) {
+        if (code === 'qoder_resource_limit' && Number.isInteger(error.retryAfterSeconds))
+          res.setHeader('Retry-After', error.retryAfterSeconds);
         json(res, error instanceof ApiError ? error.status : 502, {
           error: { message, code, retryable: false, ...(Array.isArray(error.attempts) ? { attempts: error.attempts } : {}) },
         });
-      else if (!res.destroyed)
+      } else if (!res.destroyed)
         res.end(
           "data: " +
             JSON.stringify({

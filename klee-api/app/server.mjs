@@ -358,7 +358,7 @@ export async function createService({platform,base=root,adapter=adapters[platfor
         try {
           result = await pool.chat(input.uid, body, { signal: controller.signal });
           return await relayCompletion(result.response, res, {
-            stream: body.stream === true, model: body.model, format: adapter.streamFormat,
+            stream: body.stream === true, model: body.model, format: adapter.streamFormat, platform,
             signal: controller.signal, finalizeUsage: result.finalizeUsage,
             onFirstOutput: input.timeoutUntilFirstOutput === true && body.stream === true ? () => clearTimeout(timer) : undefined,
           });
@@ -399,7 +399,7 @@ export async function createService({platform,base=root,adapter=adapters[platfor
       if(req.method==='POST'&&path==='/v1/chat/completions'){
         const body=await readBody(req,config.chatRequestMaxBytes);if(!Array.isArray(body.messages)||!body.messages.length||!body.messages.every(m=>m&&typeof m==='object'&&!Array.isArray(m)&&typeof m.role==='string')||typeof body.model!=='string'||!body.model.trim())throw new ApiError('需要 model 和有效的非空 messages 数组');
         const controller=new AbortController();req.on('aborted',()=>controller.abort());res.on('close',()=>{if(!res.writableEnded)controller.abort();});
-        const account=await fresh(store.selected()),response=await adapter.chat(account,body,{signal:controller.signal});return await relayCompletion(response,res,{stream:body.stream===true,model:body.model,format:adapter.streamFormat});
+        const account=await fresh(store.selected()),response=await adapter.chat(account,body,{signal:controller.signal});return await relayCompletion(response,res,{stream:body.stream===true,model:body.model,format:adapter.streamFormat,platform});
       }
       if(req.method==='GET'&&path==='/status')return json(res,200,{platform,accounts:store.list()});
       throw new ApiError('接口不存在',404,'not_found');

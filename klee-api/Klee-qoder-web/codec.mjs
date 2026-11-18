@@ -7,7 +7,7 @@ import {
   constants,
 } from "node:crypto";
 import { ApiError } from "../app/http.mjs";
-import { mergeCompletionUsage } from "../app/stream.mjs";
+import { mergeCompletionUsage, qoderResourceLimitError } from "../app/stream.mjs";
 
 const VERSION = "1.1.69";
 const RSA_KEY = `-----BEGIN PUBLIC KEY-----
@@ -229,6 +229,18 @@ export function chatBody(body, model) {
   };
 }
 
+function isResourceLimit(value) {
+  try {
+    const body = typeof value === 'string' ? JSON.parse(value) : value;
+    if (String(body?.code ?? body?.error?.code) === '10605') return true;
+    const detail = body?.message ?? body?.msg;
+    const error = typeof detail === 'string' ? JSON.parse(detail) : detail;
+    return String(error?.code) === '10605';
+  } catch {
+    return false;
+  }
+}
+
 /** 解开 SSE 业务信封，保留 usage 尾帧；取消向上传递给网络读取器。 */
 export function openaiResponse(response, model, signal, tools = []) {
   const reader = response.body?.getReader();
@@ -384,12 +396,14 @@ export function openaiResponse(response, model, signal, tools = []) {
             if (
               env.statusCodeValue != null &&
               Number(env.statusCodeValue) !== 200
-            )
+            ) {
+              if (isResourceLimit(env.body)) throw qoderResourceLimitError();
               throw new ApiError(
                 "Qoder 对话业务错误 " + env.statusCodeValue,
                 502,
                 "upstream_error",
               );
+            }
             if (env.body?.trim() === "[DONE]") {
               ended = true;
               break;
@@ -404,12 +418,14 @@ export function openaiResponse(response, model, signal, tools = []) {
             if (
               chunk.error ||
               (chunk.code != null && !Array.isArray(chunk.choices))
-            )
+            ) {
+              if (isResourceLimit(chunk)) throw qoderResourceLimitError();
               throw new ApiError(
                 "Qoder 拒绝了对话请求，请检查账号、额度和模型",
                 502,
                 "upstream_error",
               );
+            }
             usage = mergeCompletionUsage(usage, chunk);
             if (Array.isArray(chunk.choices))
               for (const choice of chunk.choices) {

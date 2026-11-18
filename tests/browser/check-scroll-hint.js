@@ -18,8 +18,8 @@ async (page) => {
     assert(styles.sidebar === '5px', 'Preserve the sidebar scrollbar');
     assert(styles.animation === 'none', 'Reduced motion disables the hint animation');
     if (theme === 'klee') {
-      const a = await hint.boundingBox(), b = await page.locator('.klee-companion summary').boundingBox();
-      assert(a && b && a.y + a.height <= b.y, 'Hint must sit above the Klee companion');
+      assert(await page.locator('.klee-companion').count() === 0, 'The travel note launcher must stay closed');
+      assert(await hint.evaluate(node => getComputedStyle(node).bottom) === '20px', 'Hint must not reserve space for the removed launcher');
     }
     await page.screenshot({ path: 'output/playwright/scroll-hint-' + theme + '.png' });
     await hint.click();
@@ -42,7 +42,7 @@ async (page) => {
     await hint.waitFor({ state: 'hidden' });
     await page.setViewportSize({ width: 390, height: 600 });
     await hint.waitFor();
-    assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'No mobile horizontal overflow');
+    await page.waitForFunction(() => document.documentElement.scrollWidth <= innerWidth);
   }
   await page.emulateMedia({ reducedMotion: 'no-preference' });
   await page.evaluate(() => { document.documentElement.dataset.kleeMotion = 'on'; });

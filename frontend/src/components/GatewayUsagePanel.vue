@@ -6,11 +6,13 @@ import { kleeTheme } from '../modules/decoration'
 import { date, names, safe, session } from '../modules/session'
 import {
   callStatuses, creditGroup, creditText, hasCreditEstimate, formatUsage, platformName, regionName, summarizeUsage,
-  rankUsageModels, usageModels, usageTrend, type GatewayCall, type GatewayUsage, type ConversationLog, type UsageSettings,
+  rankUsageModels, usageModels, usageTrend, isAutoUsageModel, summarizeAutoModelUsage,
+  type GatewayCall, type GatewayUsage, type ConversationLog, type UsageSettings,
 } from '../modules/gateway-usage'
 import GatewayUsageChart from './GatewayUsageChart.vue'
 import ConsoleIcon from './ConsoleIcon.vue'
 
+const props = defineProps<{ initialGroup?: string }>()
 const snapshot = ref<GatewayUsage>()
 const busy = ref(false)
 const error = ref('')
@@ -27,6 +29,15 @@ const search = ref('')
 const metric = ref<'calls' | 'tokens' | 'credits'>('calls')
 const preferredGroup = ref('')
 const expandedChart = ref<'trend' | 'models' | null>(null)
+const selectedGroup = ref('')
+const groupDialogOpen = computed({
+  get: () => !!selectedGroup.value,
+  set: (open: boolean) => { if (!open) selectedGroup.value = '' },
+})
+function openGroupUsage(model: string) {
+  expandedChart.value = null
+  selectedGroup.value = model
+}
 const chartDialogOpen = computed({ get: () => expandedChart.value !== null, set: (open: boolean) => { if (!open) expandedChart.value = null } })
 const chartTitle = computed(() => expandedChart.value === 'trend' ? '每日趋势' : '模型调用量')
 const chartType = ref<'bar' | 'line'>('bar')
@@ -89,12 +100,14 @@ async function refresh() {
 watch(() => session.keys.gateway, () => {
   snapshot.value = undefined
   expandedChart.value = null
+  selectedGroup.value = ''
   closeDetail()
   error.value = ''
   busy.value = false
   void refresh()
 }, { immediate: true, flush: 'sync' })
-onDeactivated(() => { closeDetail(); expandedChart.value = null })
+watch(() => props.initialGroup, model => { if (model && session.keys.gateway) openGroupUsage(model) }, { immediate: true })
+onDeactivated(() => { closeDetail(); expandedChart.value = null; selectedGroup.value = '' })
 onUnmounted(() => { requestVersion++; detailVersion++ })
 watch([days, platform, status, search], () => { page.value = 1 })
 
@@ -170,12 +183,16 @@ const expandedOption = computed(() => expandedChart.value === 'trend'
   ? usageTrend(filtered.value, metric.value, group.value, kleeTheme.value, { expanded: true, type: chartType.value, stacked: chartStacked.value, showValues: chartValues.value })
   : usageModels(filtered.value, kleeTheme.value, { expanded: true, limit: modelLimit.value, showValues: chartValues.value }))
 const modelRanking = computed(() => rankUsageModels(filtered.value, modelLimit.value))
+const autoGroups = computed(() => rankUsageModels(filtered.value.filter(row => isAutoUsageModel(row.model)), Infinity).map(([model]) => model))
+const groupUsage = computed(() => summarizeAutoModelUsage(filtered.value, selectedGroup.value))
 const latency = (value: number | null) => value === null ? '—' : value >= 1000
   ? (value / 1000).toFixed(2) + ' s' : value + ' ms'
 const routeErrorLabels: Record<string, string> = {
   auto_attempt_timeout: '等待首个有效输出超时', upstream_timeout: '请求超时', invalid_platform_response: '未返回有效内容',
   upstream_stream_error: '流式响应中断', upstream_unavailable: '无法连接平台', request_canceled: '请求已取消',
   no_available_account: '没有可用账号', account_busy: '账号忙碌', upstream_rate_limited: '平台限流',
+  workbuddy_channel_rejected: 'WorkBuddy 拒绝当前调用渠道（11128）',
+  qoder_resource_limit: 'Qoder 模型资源暂不可用（10605）',
   400: '请求参数不兼容', 401: '账号授权失效', 403: '权限不足', 404: '模型不可用', 429: '平台限流',
   500: '平台服务异常', 502: '平台响应异常', 503: '平台暂不可用', 504: '平台响应超时',
 }
@@ -278,8 +295,13 @@ async function showDetail(row: GatewayCall) {
             <el-empty v-else :image-size="64" description="当前范围内没有上报此指标。" />
           </el-card>
           <el-card shadow="never" class="usage-chart-panel">
-            <template #header><el-text tag="h3">模型调用量 · 前 8</el-text></template>
-            <GatewayUsageChart :option="models" title="模型调用量" label="按调用次数排名的前八个模型" @expand="expandedChart = 'models'" />
+            <template #header>
+              <el-row align="middle" justify="space-between" class="usage-heading">
+                <el-text tag="h3">模型调用量 · 前 8</el-text>
+                <el-button v-if="autoGroups.length" type="primary" link @click="openGroupUsage(autoGroups[0]!)">查看模型组用量</el-button>
+              </el-row>
+            </template>
+            <GatewayUsageChart :option="models" title="模型调用量" label="按调用次数排名的前八个模型" :can-drill-down="isAutoUsageModel" @drill-down="openGroupUsage" @expand="expandedChart = 'models'" />
           </el-card>
         </el-row>
 
@@ -292,7 +314,12 @@ async function showDetail(row: GatewayCall) {
           <el-table-column label="时间" min-width="160">
             <template #default="{ row }">{{ date(row.startedAt) }}</template>
           </el-table-column>
-          <el-table-column prop="model" label="请求模型" min-width="155" show-overflow-tooltip />
+          <el-table-column prop="model" label="请求模型" min-width="155" show-overflow-tooltip>
+            <template #default="{ row }">
+              <button v-if="isAutoUsageModel(row.model)" type="button" class="usage-model-link" @click="openGroupUsage(row.model)">{{ row.model }}</button>
+              <span v-else>{{ row.model }}</span>
+            </template>
+          </el-table-column>
           <el-table-column label="平台" min-width="95">
             <template #default="{ row }">{{ platformName(row) }}</template>
           </el-table-column>
@@ -347,7 +374,7 @@ async function showDetail(row: GatewayCall) {
   </el-card>
 
   <el-dialog v-model="chartDialogOpen" :title="chartTitle" width="min(1280px, calc(100vw - 24px))" top="4vh" destroy-on-close class="usage-chart-dialog">
-    <p class="muted usage-chart-help">筛选条件与页面统计同步。{{ expandedChart === 'trend' ? '点击图例可切换系列，底部滑块可调整日期范围。' : '完整模型名称与调用次数见图表下方列表。' }}<span class="usage-chart-mobile-tip">图表可左右滑动查看。</span></p>
+    <p class="muted usage-chart-help">筛选条件与页面统计同步。{{ expandedChart === 'trend' ? '点击图例可切换系列，底部滑块可调整日期范围。' : '点击自动模型组可查看实际模型用量。' }}<span class="usage-chart-mobile-tip">图表可左右滑动查看。</span></p>
     <div class="usage-expanded-filters">
       <el-select v-model="days" aria-label="放大时间范围"><el-option label="最近 7 天" :value="7" /><el-option label="最近 30 天" :value="30" /><el-option label="全部保留记录" :value="0" /></el-select>
       <el-select v-model="platform" aria-label="放大平台"><el-option label="全部平台" value="all" /><el-option v-for="p in (['workbuddy', 'trae', 'qoder'] as const)" :key="p" :label="names[p]" :value="p" /></el-select>
@@ -368,9 +395,41 @@ async function showDetail(row: GatewayCall) {
     <el-empty v-if="!filtered.length" description="当前筛选条件下没有记录。" />
     <el-empty v-else-if="expandedChart === 'trend' && !hasMetricData" description="当前范围内没有上报此指标。" />
     <template v-else>
-      <div class="usage-expanded-scroll" :style="{ '--usage-expanded-height': expandedChart === 'models' ? Math.max(440, modelRanking.length * 38 + 80) + 'px' : undefined }" tabindex="0" aria-label="放大图表，小屏幕可左右滚动"><GatewayUsageChart :option="expandedOption" :label="chartTitle + '放大图表'" :expandable="false" expanded /></div>
+      <div class="usage-expanded-scroll" :style="{ '--usage-expanded-height': expandedChart === 'models' ? Math.max(440, modelRanking.length * 38 + 80) + 'px' : undefined }" tabindex="0" aria-label="放大图表，小屏幕可左右滚动"><GatewayUsageChart :option="expandedOption" :label="chartTitle + '放大图表'" :expandable="false" :can-drill-down="expandedChart === 'models' ? isAutoUsageModel : undefined" @drill-down="openGroupUsage" expanded /></div>
       <p class="muted usage-chart-help">{{ filtered.length }} 次调用参与当前统计<span class="usage-chart-mobile-tip"> · 图表可左右滑动查看</span></p>
-      <ol v-if="expandedChart === 'models'" class="usage-model-ranking" aria-label="完整模型名称与调用次数"><li v-for="[model, count] in modelRanking" :key="model"><span>{{ model }}</span><strong>{{ count }} 次</strong></li></ol>
+      <ol v-if="expandedChart === 'models'" class="usage-model-ranking" aria-label="完整模型名称与调用次数">
+        <li v-for="[model, count] in modelRanking" :key="model">
+          <span><button v-if="isAutoUsageModel(model)" type="button" class="usage-model-link" @click="openGroupUsage(model)">{{ model }}</button><template v-else>{{ model }}</template></span><strong>{{ count }} 次</strong>
+        </li>
+      </ol>
+    </template>
+  </el-dialog>
+
+  <el-dialog v-model="groupDialogOpen" title="模型组用量" width="min(820px, calc(100vw - 24px))" top="6vh" destroy-on-close class="usage-chart-dialog">
+    <div class="usage-group-heading">
+      <code>{{ selectedGroup }}</code>
+      <el-select v-if="autoGroups.length > 1 || (autoGroups.length && !autoGroups.includes(selectedGroup))" v-model="selectedGroup" aria-label="切换自动模型组">
+        <el-option v-for="model in autoGroups" :key="model" :label="model" :value="model" />
+      </el-select>
+    </div>
+    <el-skeleton v-if="busy && !snapshot" :rows="3" animated />
+    <el-alert v-else-if="!snapshot && error" :title="error" type="warning" :closable="false" />
+    <template v-else>
+      <p class="usage-group-totals">{{ groupUsage.requests }} 次组请求 · {{ groupUsage.attempts }} 次已记录的模型尝试</p>
+      <p class="usage-chart-help muted">沿用页面的组请求筛选条件。每次尝试归入对应的实际模型，Token 和积分仅汇总有数据的尝试。</p>
+      <p v-if="groupUsage.untrackedRequests" class="usage-chart-help muted">其中 {{ groupUsage.untrackedRequests }} 次组请求的尝试明细不完整。</p>
+      <el-empty v-if="!groupUsage.models.length" :image-size="72" description="当前筛选范围内没有记录到实际模型尝试。" />
+      <ul v-else class="usage-group-models" aria-label="实际模型用量">
+        <li v-for="row in groupUsage.models" :key="row.model">
+          <div class="usage-group-heading"><strong>{{ row.model }}</strong><span class="usage-count">{{ row.attempts }} 次尝试</span></div>
+          <p class="muted">{{ row.platform }} · {{ row.region }} · 成功 {{ row.success }} · 失败 {{ row.failed }} · 取消 {{ row.canceled }}</p>
+          <dl class="usage-group-metrics">
+            <div><dt>Token</dt><dd>{{ formatUsage(row.tokens.value) }}<small v-if="row.tokens.count">{{ row.tokens.count }}/{{ row.attempts }} 次有数据</small></dd></div>
+            <div><dt>上报积分</dt><dd>{{ formatUsage(row.credits.value) }}<small v-if="row.credits.count">{{ row.credits.count }}/{{ row.attempts }} 次有数据</small></dd></div>
+            <div v-if="row.estimatedCredits.count"><dt>估算积分</dt><dd>{{ formatUsage(row.estimatedCredits.value) }}<small>{{ row.estimatedCredits.count }}/{{ row.attempts }} 次有数据</small></dd></div>
+          </dl>
+        </li>
+      </ul>
     </template>
   </el-dialog>
 
@@ -513,6 +572,17 @@ async function showDetail(row: GatewayCall) {
 .usage-model-ranking li { padding: 12px 0 12px 8px; border-bottom: 1px solid var(--border); }
 .usage-model-ranking li > span { display: inline-block; width: calc(100% - 70px); vertical-align: top; overflow-wrap: anywhere; color: var(--el-text-color-primary); }
 .usage-model-ranking strong { display: inline-block; width: 70px; text-align: right; color: var(--accent); font-variant-numeric: tabular-nums; }
+.usage-model-link { padding: 0; border: 0; background: transparent; color: var(--el-color-primary); text-align: left; font: inherit; overflow-wrap: anywhere; text-decoration: underline; text-underline-offset: 3px; }
+.usage-group-heading { display: flex; align-items: center; flex-wrap: wrap; justify-content: space-between; gap: 8px 12px; overflow-wrap: anywhere; }
+.usage-group-heading .el-select { width: min(240px, 100%); }
+.usage-group-totals { margin: 12px 0 8px; font-weight: 600; }
+.usage-group-models { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
+.usage-group-models > li { min-width: 0; padding: 12px; border: 1px solid var(--border); border-radius: 10px; }
+.usage-group-models p { margin: 5px 0 10px; font-size: 12px; }
+.usage-group-metrics { display: flex; flex-wrap: wrap; gap: 8px 20px; margin: 0; font-variant-numeric: tabular-nums; }
+.usage-group-metrics dt, .usage-group-metrics small { color: var(--muted); font-size: 11px; }
+.usage-group-metrics dd { margin: 2px 0 0; }
+.usage-group-metrics small { margin-left: 5px; }
 .usage-chart-mobile-tip { display: none; }
 .conversation-detail { margin-top: 10px; }
 .conversation-detail h4 { margin: 20px 0 10px; }

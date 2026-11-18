@@ -2,8 +2,8 @@
 import { onMounted, onUnmounted } from 'vue'
 import { syncOnboardingCompletion } from './modules/onboarding-sync'
 import { initialize, session } from './modules/session'
-import KleeCompanion from './components/KleeCompanion.vue'
 import KleeDecorations from './components/KleeDecorations.vue'
+import KleeStandee from './components/KleeStandee.vue'
 import ThemeToggle from './components/ThemeToggle.vue'
 import ScrollHint from './components/ScrollHint.vue'
 import { kleeTheme } from './modules/decoration'
@@ -18,7 +18,7 @@ onUnmounted(() => stopOnboardingSync?.())
   <router-view v-else v-slot="{ Component, route }"><KeepAlive include="WorkspaceView" :max="4"><component :is="Component" :key="route.path" /></KeepAlive></router-view>
   <ThemeToggle v-if="!session.ready || session.error" class="boot-theme-toggle" />
   <KleeDecorations v-if="kleeTheme" />
-  <KleeCompanion v-if="kleeTheme" />
+  <KleeStandee v-if="kleeTheme" />
   <ScrollHint v-if="session.ready && !session.error" />
 </template>
 

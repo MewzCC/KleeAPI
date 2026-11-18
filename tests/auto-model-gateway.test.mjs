@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { createGateway } from '../klee-api/app/gateway.mjs';
 import { createService } from '../klee-api/app/server.mjs';
+import { openaiResponse } from '../klee-api/Klee-qoder-web/codec.mjs';
 
 const key = 'klee-auto-test';
 const completion = content => Response.json({ choices: [{ index: 0, message: { role: 'assistant', content }, finish_reason: 'stop' }], usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 } });
@@ -16,10 +17,10 @@ const stream = text => new Response(text, { headers: { 'Content-Type': 'text/eve
 const event = delta => 'data: ' + JSON.stringify({ choices: [{ index: 0, delta }] }) + '\n\n';
 
 async function setup(t, handler, options = {}) {
-  const { poolAccounts, ...gatewayOptions } = options;
+  const { poolAccounts, workbuddyAccounts = [], ...gatewayOptions } = options;
   const dispatched = [];
   const service = await createGateway({ apiKey: key, bridge: async (platform, path, init) => {
-    if (path.startsWith('/api/pool?')) return Response.json({ accounts: platform === 'trae' ? poolAccounts ?? [{ uid: 'same-account', nickname: '测试账号', region: 'cn', enabled: true, status: 'ready', remaining: 100, models: ['a', 'b', 'c'].map(id => ({ id })) }] : [] });
+    if (path.startsWith('/api/pool?')) return Response.json({ accounts: platform === 'trae' ? poolAccounts ?? [{ uid: 'same-account', nickname: '测试账号', region: 'cn', enabled: true, status: 'ready', remaining: 100, models: ['a', 'b', 'c'].map(id => ({ id })) }] : platform === 'workbuddy' ? workbuddyAccounts : [] });
     const body = JSON.parse(init.body);
     dispatched.push(body.request.model);
     return handler(body.request.model, init, dispatched);
@@ -29,7 +30,7 @@ async function setup(t, handler, options = {}) {
   const request = (path, body, method = body ? 'POST' : 'GET', token = key) => new Promise((resolve, reject) => {
     const req = httpRequest({ host: '127.0.0.1', port: service.server.address().port, path, method, headers: { Host: '127.0.0.1:18887', Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' } }, res => {
       let text = ''; res.on('data', chunk => { text += chunk; });
-      res.on('end', () => { let data; try { data = JSON.parse(text); } catch {} resolve({ status: res.statusCode, text, data }); });
+      res.on('end', () => { let data; try { data = JSON.parse(text); } catch {} resolve({ status: res.statusCode, text, data, headers: res.headers }); });
     });
     req.on('error', reject); req.end(body ? JSON.stringify(body) : undefined);
   });
@@ -70,6 +71,41 @@ test('auto routing tries different models on one account and records failures be
   assert.ok(groups[0].targets[2].lastSuccessAt);
 });
 
+test('model directories hide groups without eligible candidates while retaining their configuration', async t => {
+  const poolAccounts = [
+    { uid: 'ready', region: 'cn', enabled: true, status: 'ready', remaining: 100, models: [{ id: 'a' }] },
+    { uid: 'empty', region: 'cn', enabled: true, status: 'no_credits', remaining: 0, models: [{ id: 'b' }] },
+    { uid: 'disabled', region: 'cn', enabled: false, status: 'ready', remaining: 100, models: [{ id: 'c' }] },
+  ];
+  const { request } = await setup(t, () => completion('ok'), { poolAccounts });
+  await request('/api/gateway/auto-models', group({ targets: [{ model: 'trae/cn/b', enabled: true }] }));
+  const catalog = (await request('/v1/models')).data.data;
+  assert.deepEqual(catalog.map(model => model.id).sort(), ['a', 'trae/cn/a']);
+  const state = (await request('/api/gateway/auto-models')).data;
+  assert.deepEqual(state.models.map(model => model.id), ['trae/cn/a']);
+  assert.equal(state.groups.length, 1);
+  assert.equal(state.groups[0].targets[0].model, 'trae/cn/b');
+});
+
+test('WorkBuddy channel rejection is actionable for direct requests and falls back for automatic requests', async t => {
+  const rejectedModel = 'workbuddy/cn/flash';
+  const { request, dispatched } = await setup(t, model => model === 'flash'
+    ? Response.json({ error: { code: '11128', message: 'PRIVATE-UPSTREAM-DETAIL' } }, { status: 502 })
+    : completion('fallback'), {
+    workbuddyAccounts: [{ uid: 'workbuddy-test', region: 'cn', enabled: true, status: 'ready', remaining: 100, models: [{ id: 'flash' }] }],
+  });
+  const direct = await request('/v1/chat/completions', { ...message, model: rejectedModel });
+  assert.equal(direct.status, 403);
+  assert.equal(direct.data.error.code, 'workbuddy_channel_rejected');
+  assert.equal(direct.data.error.retryable, false);
+  assert.doesNotMatch(direct.text, /PRIVATE-UPSTREAM-DETAIL/);
+  await request('/api/gateway/auto-models', group({ targets: [rejectedModel, 'trae/cn/a'].map(model => ({ model, enabled: true })) }));
+  assert.equal((await request('/v1/chat/completions', message)).data?.choices?.[0]?.message?.content, 'fallback');
+  assert.deepEqual(dispatched, ['flash', 'flash', 'a']);
+  const { records } = (await request('/api/gateway/usage')).data;
+  assert.equal(records[0].routeAttempts[0].errorCode, 'workbuddy_channel_rejected');
+});
+
 test('invalid HTTP 200 and malformed stream before output fall back, tool responses are valid', async t => {
   const { request, dispatched } = await setup(t, model => model === 'a' ? Response.json({ choices: [] }) : model === 'b' ? stream(event({ role: 'assistant' }) + 'data: {broken\n\n') : Response.json({ choices: [{ index: 0, message: { role: 'assistant', content: null, tool_calls: [{ id: 'call1', type: 'function', function: { name: 'lookup', arguments: '{}' } }] }, finish_reason: 'tool_calls' }] }));
   await request('/api/gateway/auto-models', group());
@@ -78,6 +114,43 @@ test('invalid HTTP 200 and malformed stream before output fall back, tool respon
   assert.ok(result.text.includes('lookup'));
   assert.ok(result.text.includes('[DONE]'));
   assert.deepEqual(dispatched, ['a', 'b', 'c']);
+});
+
+test('switching platforms before first output forwards the entire client conversation and tool context', async t => {
+  const tool = { name: 'lookup', parameters: { type: 'object', properties: { query: { type: 'string' } } } };
+  const input = {
+    model: 'auto/test',
+    stream: true,
+    messages: [
+      { role: 'developer', content: 'Preserve the original task constraints.' },
+      { role: 'user', content: 'The original task identifier is KLEE-42.' },
+      ...Array.from({ length: 34 }, (_, index) => [
+        { role: 'assistant', content: `Update ${index}` },
+        { role: 'user', content: `Context ${index}: ` + 'project details '.repeat(200) },
+      ]).flat(),
+      { role: 'assistant', content: null, tool_calls: [{ id: 'lookup-1', type: 'function', function: { name: tool.name, arguments: '{"query":"KLEE-42"}' } }] },
+      { role: 'tool', tool_call_id: 'lookup-1', content: 'The lookup result is ready.' },
+      { role: 'user', content: 'Continue from the lookup result.' },
+    ],
+    tools: [{ type: 'function', function: tool }],
+    tool_choice: 'auto',
+  };
+  const forwarded = [];
+  const { request } = await setup(t, (model, init) => {
+    forwarded.push(JSON.parse(init.body).request);
+    return model === 'flash'
+      ? stream(event({ role: 'assistant' }) + 'data: [DONE]\n\n')
+      : stream(event({ content: 'Continuing KLEE-42' }) + 'data: [DONE]\n\n');
+  }, {
+    workbuddyAccounts: [{ uid: 'workbuddy-test', region: 'cn', enabled: true, status: 'ready', remaining: 100, models: [{ id: 'flash' }] }],
+  });
+  const targets = ['workbuddy/cn/flash', 'trae/cn/a'].map(model => ({ model, enabled: true }));
+  assert.equal((await request('/api/gateway/auto-models', group({ targets }))).status, 201);
+  const result = await request('/v1/chat/completions', input);
+  assert.equal(result.status, 200);
+  assert.match(result.text, /Continuing KLEE-42/);
+  assert.match(result.text, /\[DONE\]/);
+  assert.deepEqual(forwarded, [{ ...input, model: 'flash' }, { ...input, model: 'a' }]);
 });
 
 test('empty message objects and role-only finished streams cannot stop automatic fallback', async t => {
@@ -259,6 +332,68 @@ test('HTTP headers and role-only frames do not prevent timeout rotation to anoth
   assert.equal(attempts[0].errorCode, 'auto_attempt_timeout');
   assert.equal(attempts[0].firstOutputMs, undefined);
   assert.equal(typeof attempts[1].firstOutputMs, 'number');
+});
+
+test('Qoder 10605 switches platforms and cools the regional model across accounts for 30 seconds', async t => {
+  const base = await mkdtemp(join(tmpdir(), 'klee-qoder-capacity-'));
+  let now = Date.now(), qoderCalls = 0, limited = true;
+  t.mock.method(Date, 'now', () => now);
+  const platformService = await createService({ platform: 'qoder', base, callback: false, protectKey: false, adapter: {
+    normalize: data => data,
+    models: async () => [{ id: 'dfmodel' }],
+    quota: async () => ({ remaining: 100 }),
+    streamFormat: 'openai',
+    async chat(_, body, { signal }) {
+      qoderCalls++;
+      if (!limited) return completion('Qoder recovered');
+      const resource = { code: '10605', message: JSON.stringify({ subCode: 'RESOURCE_LIMIT', retryAfterSeconds: 30 }) };
+      const payload = { statusCodeValue: 403, body: JSON.stringify({ code: '403', message: JSON.stringify(resource) }) };
+      return openaiResponse(stream('data: ' + JSON.stringify(payload) + '\n\n'), body.model, signal);
+    },
+  } });
+  t.after(async () => { await platformService.close(); await rm(base, { recursive: true, force: true }); });
+  await platformService.store.save({ uid: 'qoder-1', accessToken: 'test', region: 'cn' }, true);
+  await platformService.store.save({ uid: 'qoder-2', accessToken: 'test', region: 'cn' }, false);
+  await new Promise(resolve => platformService.server.listen(0, '127.0.0.1', resolve));
+  const { request } = await setup(t, null, { bridge: (platform, path, options) => {
+    if (platform === 'qoder') return new Promise((resolve, reject) => {
+      const req = httpRequest({ host: '127.0.0.1', port: platformService.server.address().port, path, method: options.method, signal: options.signal, headers: {
+        Host: '127.0.0.1:' + platformService.config.ports.qoder, Authorization: 'Bearer ' + platformService.store.apiKey,
+      } }, res => resolve(new Response(Readable.toWeb(res), { status: res.statusCode, headers: res.headers })));
+      req.on('error', reject);
+      req.end(options.body);
+    });
+    if (path.startsWith('/api/pool?')) return Response.json({ accounts: platform === 'trae'
+      ? [{ uid: 'backup', region: 'cn', enabled: true, status: 'ready', remaining: 100, models: [{ id: 'a' }] }]
+      : [] });
+    return completion('Trae fallback');
+  } });
+  const targets = ['qoder/cn/dfmodel', 'trae/cn/a'].map(model => ({ model, enabled: true }));
+  assert.equal((await request('/api/gateway/auto-models', group({ targets, cooldownMs: 90000 }))).status, 201);
+  const first = await request('/v1/chat/completions', { ...message, stream: true });
+  assert.match(first.text, /Trae fallback/);
+  assert.match(first.text, /\[DONE\]/);
+  const [record] = (await request('/api/gateway/usage')).data.records;
+  assert.equal(record.routeAttempts[0].errorCode, 'qoder_resource_limit');
+  assert.equal(record.routeAttempts[0].httpStatus, 429);
+  const [snapshot] = (await request('/api/gateway/auto-models')).data.groups;
+  assert.equal(snapshot.targets[0].availableAccounts, 0);
+  assert.equal(snapshot.targets[0].cooldownUntil, now + 30000);
+  const coolingCatalog = (await request('/v1/models')).data.data;
+  assert.ok(!coolingCatalog.some(model => ['qoder/cn/dfmodel', 'dfmodel'].includes(model.id)));
+  assert.ok(!(await request('/api/gateway/auto-models')).data.models.some(model => model.id === 'qoder/cn/dfmodel'));
+  const direct = await request('/v1/chat/completions', { ...message, model: targets[0].model });
+  assert.equal(direct.status, 429);
+  assert.equal(direct.headers['retry-after'], '30');
+  assert.equal(direct.data.error.code, 'qoder_resource_limit');
+  limited = false;
+  now += 29999;
+  assert.equal((await request('/v1/chat/completions', message)).data.choices[0].message.content, 'Trae fallback');
+  assert.equal(qoderCalls, 1);
+  now += 1;
+  assert.ok((await request('/v1/models')).data.data.some(model => model.id === 'qoder/cn/dfmodel'));
+  assert.equal((await request('/v1/chat/completions', message)).data.choices[0].message.content, 'Qoder recovered');
+  assert.equal(qoderCalls, 2);
 });
 
 test('valid Solo output can finish after both gateway and platform timeouts', async t => {

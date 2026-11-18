@@ -1,6 +1,8 @@
 import {randomUUID} from 'node:crypto';
 import {ApiError,json} from './http.mjs';
 
+export const qoderResourceLimitError = () => new ApiError('Qoder 模型资源暂不可用（10605），请稍后重试。', 429, 'qoder_resource_limit');
+
 /** 按完整 SSE 帧读取，保留跨网络分片的 UTF-8 字符与多行 data。 */
 export async function* parseEvents(body,{signal}={}){
   const reader=body.getReader(),decoder=new TextDecoder();let buffer='';
@@ -62,7 +64,7 @@ export const hasModelOutput = message => !!message && typeof message === 'object
 );
 
 /** 将平台 SSE 统一成 OpenAI 格式，同时支持流式与完整响应，不重试请求。 */
-export async function relayCompletion(response,res,{stream=false,model,format='openai',signal,finalizeUsage,onFirstOutput}={}){
+export async function relayCompletion(response,res,{stream=false,model,format='openai',platform,signal,finalizeUsage,onFirstOutput}={}){
   const send=value=>write(res,value,signal);
   if(!response.ok){await response.body?.cancel();throw new ApiError('上游返回 HTTP '+response.status,response.status,'upstream_http_error');}
   if(!(response.headers.get('content-type')||'').includes('text/event-stream')){
@@ -83,6 +85,7 @@ export async function relayCompletion(response,res,{stream=false,model,format='o
     for await(const event of parseEvents(response.body,{signal})){
       if(event.data==='[DONE]'){terminal=true;break;}
       let data;try{data=JSON.parse(event.data);}catch{throw new ApiError('上游流格式无效',502);}
+      if(platform==='qoder'&&data.error?.code==='qoder_resource_limit')throw qoderResourceLimitError();
       if(event.event==='error'||data.error)throw new ApiError('平台对话失败'+(data.code?'（'+data.code+'）':''),502,'upstream_stream_error');
       let delta={};
       if(format==='solo'){

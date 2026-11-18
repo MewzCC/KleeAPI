@@ -8,7 +8,8 @@ async (page) => {
   const longId = 'workbuddy/cn/' + 'long-canonical-model-name-'.repeat(5);
   const models = [
     { id: 'trae/cn/Claude-Sonnet-4', name: 'Claude Sonnet 4', availableAccounts: 2 },
-    { id: 'qoder/global/Auto', name: 'Qoder Auto', availableAccounts: 0 },
+    { id: 'qoder/global/Auto', name: 'Qoder Auto', availableAccounts: 1 },
+    { id: 'qoder/global/unavailable', name: 'Unavailable Model', availableAccounts: 0 },
     { id: longId, name: '较长的真实模型名称用于验证窄屏换行与完整 ID 保留', availableAccounts: 1 },
     ...Array.from({ length: 20 }, (_, index) => ({ id: 'workbuddy/cn/scroll-model-' + index, name: '滚动测试模型 ' + index, availableAccounts: 1 })),
   ];
@@ -66,6 +67,8 @@ async (page) => {
   await page.getByRole('textbox', { name: '模型组 ID', exact: true }).fill('auto/coding');
   const search = page.getByRole('textbox', { name: '搜索候选模型', exact: true });
   const pickerRow = id => page.locator('.auto-catalog article').filter({ has: page.locator('code', { hasText: id }) });
+  await search.fill('qoder/global/unavailable');
+  assert(await modal.locator('.auto-catalog article').count() === 0, 'Unavailable models cannot be selected');
   await search.fill(models.at(-1).id);
   assert(await modal.locator('.auto-catalog article').count() === 1 && await pickerRow(models.at(-1).id).count() === 1, 'Search includes models beyond the first ten');
   await search.fill('');
@@ -82,7 +85,7 @@ async (page) => {
   await page.getByRole('option', { name: '全部平台', exact: true }).click();
   await pickerRow(longId).getByRole('button', { name: '添加', exact: true }).click();
   await modal.getByRole('button', { name: /展开全部.*模型/ }).click();
-  assert(await modal.locator('.auto-catalog article').count() === models.length, 'Expand reveals the full matching catalog');
+  assert(await modal.locator('.auto-catalog article').count() === models.filter(model => model.availableAccounts > 0).length, 'Expand reveals the available matching catalog');
   await pickerRow(models.at(-1).id).getByRole('button', { name: '添加', exact: true }).click();
   await modal.getByRole('button', { name: '回到顶部并收起', exact: true }).click();
   await page.waitForFunction(() => document.querySelector('.auto-model-dialog .el-dialog__body').scrollTop === 0);

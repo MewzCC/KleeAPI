@@ -1,12 +1,38 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { usageTrend, usageModels } from '../frontend/src/modules/gateway-usage.ts';
+import { usageTrend, usageModels, summarizeAutoModelUsage } from '../frontend/src/modules/gateway-usage.ts';
 
 const records = [
   { id: 'a', startedAt: Date.UTC(2026, 10, 10, 4), model: 'Claude-Sonnet-4', upstreamModel: null, platform: 'trae', region: 'cn', account: 'a', status: 'success', httpStatus: 200, errorCode: null, durationMs: 1200, stream: true, attempts: 1, inputTokens: 10, outputTokens: 5, totalTokens: 15, credits: 1 },
   { id: 'b', startedAt: Date.UTC(2026, 10, 10, 5), model: 'GPT-5', upstreamModel: null, platform: 'workbuddy', region: 'cn', account: 'a', status: 'failed', httpStatus: 502, errorCode: null, durationMs: 800, stream: false, attempts: 1, inputTokens: 10, outputTokens: 0, totalTokens: 10, credits: null },
   { id: 'c', startedAt: Date.UTC(2026, 10, 11, 6), model: 'Claude-Sonnet-4', upstreamModel: null, platform: 'trae', region: 'cn', account: 'a', status: 'success', httpStatus: 200, errorCode: null, durationMs: 900, stream: true, attempts: 1, inputTokens: 8, outputTokens: 4, totalTokens: 12, credits: 2 },
 ];
+
+test('automatic group usage attributes retries and consumption to individual models', () => {
+  const base = records[0];
+  const first = { ...base, model: 'workbuddy/cn/deepseek', platform: 'workbuddy', status: 'failed', totalTokens: 0, credits: null, estimatedCredits: 0.25 };
+  const second = { ...base, model: 'trae/cn/deepseek', totalTokens: 42, credits: 1.5 };
+  const canceled = { ...first, status: 'canceled', totalTokens: null, estimatedCredits: null };
+  const group = { ...base, model: 'auto/rimtalk', totalTokens: 999, credits: 999 };
+  const summary = summarizeAutoModelUsage([
+    { ...group, attempts: 3, routeAttempts: [first, canceled, second] },
+    { ...group, attempts: 1, upstreamModel: 'deepseek' },
+    { ...group, attempts: 0, routeAttempts: [] },
+    { ...group, model: 'auto/other', routeAttempts: [second] },
+  ], group.model);
+  assert.equal(summary.requests, 3);
+  assert.equal(summary.attempts, 3);
+  assert.equal(summary.untrackedRequests, 1);
+  const [workbuddy, trae] = summary.models;
+  assert.equal(workbuddy.model, first.model);
+  assert.deepEqual([workbuddy.success, workbuddy.failed, workbuddy.canceled], [0, 1, 1]);
+  assert.deepEqual(workbuddy.tokens, { value: 0, count: 1 });
+  assert.deepEqual(workbuddy.credits, { value: null, count: 0 });
+  assert.deepEqual(workbuddy.estimatedCredits, { value: 0.25, count: 1 });
+  assert.equal(trae.model, second.model);
+  assert.deepEqual(trae.tokens, { value: 42, count: 1 });
+  assert.deepEqual(trae.credits, { value: 1.5, count: 1 });
+});
 
 /** 收集 option 中所有出现的颜色字符串，用于断言主题配色确实切换。 */
 function colors(value, found = new Set()) {
@@ -23,14 +49,14 @@ test('both themes keep the same chart semantics but swap the palette', () => {
   ]) {
     const dark = build(false), klee = build(true);
     assert.deepEqual(dark.color, ['#a5ddc5', '#e49c97', '#e1bc7b', '#9db4d8']);
-    assert.deepEqual(klee.color, ['#4c7d63', '#b3546a', '#c08a3e', '#7a6a94']);
+    assert.deepEqual(klee.color, ['#b3546a', '#7a6a94', '#c08a3e', '#4c7d63']);
     assert.equal(klee.animation, false, 'Charts must not animate');
     assert.notEqual(dark.textStyle.color, klee.textStyle.color);
     assert.equal(klee.textStyle.color, '#846071', 'Klee chart text must use the theme muted color');
     assert.equal(dark.textStyle.color, '#98a3a3');
     assert.equal(klee.tooltip.backgroundColor, '#fffdfb', 'Klee tooltip must use the paper surface');
     assert.equal(dark.tooltip.backgroundColor, '#181c1d');
-    assert.equal(klee.tooltip.renderMode, 'richText');
+    assert.equal(klee.tooltip.renderMode, 'html');
     // 主题差异必须落在真实颜色上，而不只是文字色。
     const darkColors = colors(dark), kleeColors = colors(klee);
     assert(darkColors.size > 6 && kleeColors.size > 6);
@@ -38,6 +64,39 @@ test('both themes keep the same chart semantics but swap the palette', () => {
     for (const warm of ['#b3546a', '#e4c9d1', '#f0dde2']) assert(kleeColors.has(warm), 'Klee charts must use warm tokens: ' + warm);
     for (const cool of ['#a5ddc5', '#2a3031', '#343c3d']) assert(darkColors.has(cool), 'Default charts must use cool tokens: ' + cool);
     assert(!kleeColors.has('#2a3031') && !kleeColors.has('#343c3d'), 'Klee charts must drop the dark grid colors');
+  }
+});
+
+test('hover cards escape model names and distinguish zero, missing and formatted values', () => {
+  for (const light of [false, true]) {
+    const option = usageTrend(records, 'calls', '', light);
+    const html = option.tooltip.formatter([
+      { name: '<img src=x onerror=alert(1)>', seriesName: '成功', seriesIndex: 0, value: 1234 },
+      { name: 'ignored', seriesName: '失败', seriesIndex: 1, value: 0 },
+      { name: 'ignored', seriesName: '已取消', seriesIndex: 2, value: null },
+    ]);
+    assert(html.includes('&lt;img src=x onerror=alert(1)&gt;'));
+    assert(!html.includes('<img'));
+    assert(html.includes('1,234') && html.includes('>0<') && html.includes('未上报'));
+    assert(html.includes('次'));
+    assert(html.includes(option.color[0]), 'Markers must match the opaque series color');
+    assert.equal(option.tooltip.enterable, false, 'Hover card must not intercept chart clicks');
+    assert.equal(option.tooltip.transitionDuration, 0, 'Hover must not trail behind the cursor');
+  }
+  const ranking = usageModels(records, true);
+  const html = ranking.tooltip.formatter({ name: 'model<&"\'>', seriesName: '调用次数', seriesIndex: 0, value: 2 });
+  assert(html.includes('model&lt;&amp;&quot;&#39;&gt;'));
+  assert(usageTrend(records, 'tokens', '', true).tooltip.formatter({ name: 'day', seriesName: 'Token', value: 20 }).includes('Token'));
+});
+
+test('hover cards flip away from the cursor and remain inside narrow charts', () => {
+  const { position } = usageModels(records, true).tooltip;
+  const size = { contentSize: [180, 120], viewSize: [300, 260] };
+  for (const point of [[0, 0], [299, 259], [150, 130]]) {
+    const [x, y] = position(point, [], null, null, size);
+    assert(x >= 8 && x + 180 <= 292, 'Card must stay inside horizontal chart bounds');
+    assert(y >= 8 && y + 120 <= 252, 'Card must stay inside vertical chart bounds');
+    assert(!(point[0] >= x && point[0] <= x + 180 && point[1] >= y && point[1] <= y + 120), 'Card must not cover the cursor');
   }
 });
 
@@ -63,7 +122,7 @@ test('bars get rounded corners and gradients while line charts stay clean', () =
   assert.equal(line.legend.icon, 'circle');
   assert.equal(bar.legend.icon, 'roundRect');
   assert.equal(line.tooltip.axisPointer.type, 'line');
-  assert.equal(bar.tooltip.axisPointer.type, 'shadow');
+  assert.equal(bar.tooltip.axisPointer.type, 'none', 'Bar hover must not paint a background band or guide line');
 });
 
 test('ranking chart uses a horizontal gradient and keeps axis labels readable', () => {
@@ -75,6 +134,16 @@ test('ranking chart uses a horizontal gradient and keeps axis labels readable', 
   assert.equal(option.xAxis.axisLine.show, false);
   assert.equal(option.xAxis.splitLine.lineStyle.type, 'dashed');
   assert.equal(option.yAxis.data.length, 2);
+});
+
+test('left and right charts share the same bar hover treatment in both themes', () => {
+  for (const light of [false, true]) {
+    const trend = usageTrend(records, 'calls', '', light);
+    const ranking = usageModels(records, light);
+    assert.deepEqual(trend.series[0].emphasis, ranking.series[0].emphasis);
+    assert.equal(trend.tooltip.axisPointer.type, 'none');
+    assert.equal(ranking.tooltip.axisPointer.type, 'none');
+  }
 });
 
 test('show-values labels stay legible on top of both bar and paper backgrounds', () => {

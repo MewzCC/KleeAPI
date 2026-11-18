@@ -23,9 +23,15 @@ const search = ref(''), selected = ref(''), accountSearch = ref(''), accountStat
 const apiGuide = ref<InstanceType<typeof ApiGuide>>()
 const GatewayUsagePanel = defineAsyncComponent(() => import('../components/GatewayUsagePanel.vue'))
 const AutoModelsPanel = defineAsyncComponent(() => import('../components/AutoModelsPanel.vue'))
+const usageGroup = ref('')
+function openGroupUsage(model: string) {
+  usageGroup.value = model
+  tab.value = 'usage'
+}
+watch(tab, value => { if (value !== 'usage') usageGroup.value = '' })
 const tabs = computed(() => [{ id: 'overview', label: '工作台' }, ...(p === 'gateway' ? [{ id: 'pool', label: '跨平台号池' }] : [{ id: 'accounts', label: '账号管理' }]), { id: 'checkin', label: '签到中心' }, { id: 'models', label: '模型目录' }, ...(p === 'gateway' ? [{ id: 'auto-models', label: '自动模型' }, { id: 'usage', label: '调用统计' }] : [{ id: 'quota', label: '额度监控' }]), { id: 'guide', label: 'API 接入' }, { id: 'settings', label: '连接设置' }])
 const filteredAccounts = computed(() => accounts.value.filter(a => `${a.nickname || ''} ${a.email || ''} ${a.uid} ${a.region || ''}`.toLowerCase().includes(accountSearch.value.toLowerCase()) && (accountState.value === 'all' || accountState.value === 'enabled' && a.enabled !== false || accountState.value === 'attention' && (a.status !== 'ready' || a.enabled === false))))
-const models = computed(() => p === 'gateway' ? pool.value?.models || [] : catalog.value?.data || [])
+const models = computed(() => (p === 'gateway' ? pool.value?.models || [] : catalog.value?.data || []).filter(model => model.availableAccounts === undefined || model.availableAccounts > 0))
 const confirmedModel = ref(''), tested = ref(false), clientConfirmed = ref(false), testRevision = ref(0)
 const guided = ref(false), clientCopied = ref(false)
 const progressPanel = ref<InstanceType<typeof OnboardingProgress>>()
@@ -170,8 +176,8 @@ function addAccount() { tab.value = 'accounts'; connecting.value = true; setTime
     <OnboardingProgress v-if="tab === 'overview'" ref="progressPanel" :platform="p" :progress="onboarding" :client-copied="clientCopied" @navigate="navigateOnboarding" @confirm-client="confirmClient(true)" />
     <WorkspaceOverview v-if="tab === 'overview'" :platform="p" :accounts="accounts" :pool="pool" :checkins="checkins" :checkin-loading="!!(busy.checkins || busy.claim)" :checkin-error="errors.checkins" :catalog="catalog" :connected="!!session.keys[p]" :loading="!!(busy.accounts || busy.pool)" :error="errors.pool || errors.accounts" @navigate="tab = $event" @connect="addAccount" @saved="refresh" />
     <template v-if="tab === 'settings'"><KeyPanel :platform="p" @saved="connectionSaved" /><section class="panel"><div class="section-heading"><h2>本地连接信息</h2><el-tag effect="plain">仅监听本机</el-tag></div><div class="settings-row"><span>服务地址</span><code>{{ baseURL(p) }}</code><el-button text @click="copy(baseURL(p))">复制</el-button></div><div class="settings-row"><span>API Base URL</span><code>{{ baseURL(p) }}/v1</code><el-button text @click="copy(baseURL(p) + '/v1')">复制</el-button></div><div class="settings-row"><span>界面外观</span><ThemeToggle /></div></section></template>
-    <GatewayUsagePanel v-if="p === 'gateway' && tab === 'usage'" />
-    <KeepAlive><AutoModelsPanel v-if="p === 'gateway' && tab === 'auto-models'" @changed="refreshPool()" /></KeepAlive>
+    <GatewayUsagePanel v-if="p === 'gateway' && tab === 'usage'" :initial-group="usageGroup" />
+    <KeepAlive><AutoModelsPanel v-if="p === 'gateway' && tab === 'auto-models'" @changed="refreshPool()" @usage="openGroupUsage" /></KeepAlive>
 
     <section v-if="tab === 'pool'" class="panel"><div class="section-heading"><div><h2>跨平台号池</h2><p class="muted">{{ pool ? '更新于 ' + date(pool.fetchedAt) : '保存网关 Key 后读取实际号池。' }}</p></div><el-button :disabled="!session.keys[p]" :loading="busy.pool" @click="refreshPool(true)">刷新号池</el-button></div><el-alert v-if="errors.pool" :title="errors.pool + (pool ? ' 显示上次快照，当前可用性待确认。' : '')" type="error" :closable="false" /><div class="stats"><div><span>已连接账号</span><strong>{{ pool ? pool.accounts.length : '—' }}</strong></div><div><span>可参与调度</span><strong>{{ pool ? pool.accounts.filter(eligible).length : '—' }}</strong></div><div><span>发现模型</span><strong>{{ pool ? models.length : '—' }}</strong></div></div><el-alert v-for="error in pool?.platforms?.filter(x => x.error)" :key="error.platform" :title="names[error.platform] + '：' + safe(error.error)" type="warning" :closable="false" /><div v-if="pool?.accounts.length" class="rows"><article v-for="a in pool.accounts" :key="a.platform + ':' + a.uid" class="account-row"><span class="avatar">{{ (a.nickname || names[a.platform || 'gateway']).slice(0, 1) }}</span><div class="account-info"><h3>{{ a.nickname || a.uid }} <el-tag :type="eligible(a) ? 'success' : 'warning'">{{ a.enabled === false ? '已停用' : a.status === 'expired' ? '认证失效' : eligible(a) ? '可参与调度' : '暂不可调度' }}</el-tag></h3><p class="muted">{{ names[a.platform || 'gateway'] }} · {{ a.region || '未知区域' }} · {{ a.uid }}</p><div class="pool-account-meta"><BalanceProgress :account="a" /><span>· {{ a.models?.length ?? '未知' }} 个模型 · 处理中 {{ a.inFlight ?? 0 }}</span></div><p v-if="a.quotaError || a.modelsError" class="error-text">{{ a.quotaError ? '额度：' + safe(a.quotaError) : '' }} {{ a.modelsError ? '模型：' + safe(a.modelsError) : '' }}</p></div></article></div><el-empty v-else description="暂无账号。请在各平台管理页连接账号。" /></section>
 
