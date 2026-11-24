@@ -36,7 +36,7 @@
 
 打开解压后的目录，应该能看到 `package.json`、`frontend` 和 `Start-Manager.cmd`。后面的命令都在这个目录里执行。
 
-电脑上还需要安装 **Node.js 22.12 或以上版本**。可以从 [Node.js 官网](https://nodejs.org/zh-cn/download) 下载安装包，npm 会一起安装。
+先直接双击 `Start-Manager.cmd`。启动器会查找可用的随包 Node 和系统 Node；电脑已安装 **Node.js 22.12 或以上版本**和 npm 时，会自动使用，不必重复安装。找不到可用版本时才提示从 [Node.js 官网](https://nodejs.org/zh-cn/download) 安装，或下载免安装的便携版。npm 会随完整的 Node 安装包一起安装。
 
 安装后，重新打开终端，分别输入：
 
@@ -56,7 +56,9 @@ cd KleeAPI
 
 ## 2. 第一次启动
 
-在项目文件夹的空白处右键，选择「在终端中打开」。确认终端当前所在的目录里有 `package.json`，然后依次执行下面三步。
+电脑已有 Node 和 npm 时，直接双击 `Start-Manager.cmd` 即可。第一次启动会自动安装缺少的前端依赖，再构建管理页面，完成后继续启动并打开浏览器；请保持窗口打开，等待完成。后续文件齐全时不重复安装或构建。自动准备失败会显示错误，并提示检查网络、npm，或下载便携版。
+
+喜欢使用终端的话，也可以直接执行 `npm start`，同样会自动准备。下面是可选的手动安装、构建步骤，适合查看具体错误或开发时使用：在项目文件夹空白处右键，选择「在终端中打开」，确认当前目录里有 `package.json`。
 
 先安装前端需要的依赖：
 
@@ -264,7 +266,7 @@ npm run status
 
 ### 提示缺少前端文件
 
-从 GitHub 下载的源码不包含编译后的页面。回到项目目录，先执行 `npm run setup`，再执行 `npm run build`，完成后重新启动。
+从 GitHub 下载的源码不包含编译后的页面。正常双击 Start 或运行 `npm start` 会自动安装依赖并构建；自动准备失败时先看窗口中的具体错误，检查网络与 npm。也可以手动执行 `npm run setup` 和 `npm run build`，或下载包含完整页面的便携版。便携版文件缺失则需完整解压或重新下载。
 
 ### 提示端口被占用
 
@@ -357,7 +359,7 @@ npm start
 
 正式页面改完后执行 `npm run build`，刷新浏览器就能看到。后端代码改动需要重启服务。
 
-源码仓库不包含 `node_modules`、`frontend/dist` 和便携的 `node.exe`。启动脚本会优先使用本机已有的 `runtime/node.exe`，否则使用系统安装的 Node.js。
+源码仓库不包含 `node_modules`、`frontend/dist` 和便携的 `node.exe`。启动脚本会依次检查随包 Node 与系统 Node，选择可用的 22.12+ 版本；缺少前端依赖或页面时自动完成首次安装、构建。完整便携版不安装源码依赖，继续按发布清单验证完整性。
 
 `npm run release:win` 会根据锁文件安装前端构建依赖并构建，从官方固定地址下载 Node.js 24.22.2 LTS 和 Qoder 组件，通过校验后生成 `output/releases/KleeAPI-版本号-windows-x64.zip` 及同名 `.sha256`。首次打包需要联网，使用 Node.js 内置模块和 Windows 压缩能力，不需要额外安装打包工具。相同版本已有成品时拒绝覆盖，请先另存旧包或修改根 `package.json` 版本号。
 

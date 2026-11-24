@@ -6,12 +6,12 @@ import {existsSync,mkdirSync,openSync,closeSync,readFileSync,writeFileSync,unlin
 import {join,resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {loadConfig,root} from '../klee-api/app/config.mjs';
-import {checkInstallation} from './preflight.mjs';
+import {prepareInstallation} from './preflight.mjs';
 
 const stateFile=join(root,'runtime','manager.json');
 const identity=resolve(root).toLowerCase();
 const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
-const node=existsSync(join(root,'runtime','node.exe'))?join(root,'runtime','node.exe'):process.execPath;
+const node=process.execPath;
 
 /** 检查配置中的全部监听端口；失败只关闭本次探测器，不触碰已有进程。 */
 export async function preflightPorts(ports){
@@ -88,7 +88,7 @@ export async function launchBrowser(url){
 export async function runManager({dev=false,browser=true,spawnProcess=spawn,checkReady=healthy,openBrowser=launchBrowser}={}){
   if(await existingManager())throw Error('本项目管理器已启动，请使用 npm run status 或 npm stop。');
   const config=loadConfig();
-  await checkInstallation({dev});
+  await prepareInstallation({dev});
   if(dev){if(!existsSync(join(root,'frontend','node_modules','vite','bin','vite.js')))throw Error('缺少前端依赖，请先运行 npm run setup。');}
   else if(!existsSync(join(root,'frontend','dist','index.html')))throw Error('缺少 frontend/dist/index.html，请先运行 npm run setup 和 npm run build。');
   const services=serviceSpecs(config,dev);
@@ -153,7 +153,7 @@ export async function runManager({dev=false,browser=true,spawnProcess=spawn,chec
 async function detached(dev,browser){
   const existing=await existingManager();
   if(existing){console.log('本项目管理器已运行。');if(existing.status.status==='ready'&&browser)try{await launchBrowser(`http://127.0.0.1:${existing.status.mode==='development'?15173:loadConfig().ports.gateway}/admin`);}catch{console.error('请手动打开管理页面。');}return;}
-  await checkInstallation({dev});
+  await prepareInstallation({dev});
   mkdirSync(join(root,'runtime','logs'),{recursive:true});
   const fd=openSync(join(root,'runtime','logs','manager.log'),'a',0o600);
   let child;try{child=spawn(node,[fileURLToPath(import.meta.url),dev?'dev':'start',...(browser?[]:['--no-browser'])],{cwd:root,detached:true,windowsHide:true,stdio:['ignore',fd,fd,'ipc']});}finally{closeSync(fd);}

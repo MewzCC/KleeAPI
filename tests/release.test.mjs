@@ -16,7 +16,7 @@ async function fixture(t) {
     await writeFile(join(source, path), content);
   }
   for (const file of ['Start-Manager.cmd', 'Stop-Manager.cmd', 'Start-Manager.ps1', 'Stop-Manager.ps1',
-    'LICENSE', 'README.md', 'signin.sh', 'scripts/manager.mjs', 'scripts/preflight.mjs', 'scripts/setup-qoder-runtime.mjs',
+    'LICENSE', 'README.md', 'signin.sh', 'scripts/manager.mjs', 'scripts/preflight.mjs', 'scripts/resolve-node.ps1', 'scripts/setup-qoder-runtime.mjs',
     'klee-api/app/server.mjs', 'klee-api/app/gateway.mjs', 'klee-api/app/config.mjs',
     'klee-api/Klee-workbuddy-web/provider.mjs', 'klee-api/Klee-workbuddy-web/LICENSE',
     'klee-api/Klee-trae-web/provider.mjs', 'klee-api/Klee-trae-web/LICENSE',
@@ -53,6 +53,7 @@ test('portable release stages only application files, keeps licenses and generat
   assert.equal(manifest.arch, 'x64');
   for (const path of privateFiles) assert.equal(manifest.files[path], undefined, path);
   assert.ok(manifest.files['klee-api/app/server.mjs']);
+  assert.ok(manifest.files['scripts/resolve-node.ps1']);
   assert.ok(manifest.files['frontend/dist/assets/app.js']);
   assert.ok(manifest.files['runtime/qoder/runtime-info.exe']);
   assert.equal(await readFile(join(f.destination, 'licenses/frontend/vue/LICENSE'), 'utf8'), 'Vue fixture license');

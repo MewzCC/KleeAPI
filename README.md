@@ -12,7 +12,7 @@ Windows 10/11 x64 用户可以从 [Releases](https://github.com/MewzCC/KleeAPI/r
 
 启动时检查文件完整性、写权限与服务端口，成功后自动打开浏览器。首次运行会生成自己的 Key，仍需在页面登录自己的平台账号。请完整解压到可写文件夹，不要直接在压缩包中运行。
 
-源码中的 `Code → Download ZIP` 不包含运行时和已构建页面，仍需按教程安装。如果 Releases 暂无附件，可在 Actions 的「Windows portable release」成功构建记录中下载 `KleeAPI-windows-x64` 成品；Actions 下载需要 GitHub 登录，外层附件解压后还有一个正式发布 ZIP。
+源码中的 `Code → Download ZIP` 不包含运行时和已构建页面。电脑已有 Node.js 22.12+ 和 npm 时，解压后直接双击 `Start-Manager.cmd`：首次会自动安装缺少的前端依赖并构建，完成后启动；以后文件齐全时跳过安装与构建。找不到可用 Node，或自动准备失败时，窗口才提示安装 Node/npm 或下载便携版。如果 Releases 暂无附件，可在 Actions 的「Windows portable release」成功构建记录中下载 `KleeAPI-windows-x64` 成品；Actions 下载需要 GitHub 登录，外层附件解压后还有一个正式发布 ZIP。
 
 ## 可以做什么
 
@@ -48,7 +48,7 @@ WorkBuddy、Trae、Qoder 各自的页面负责管理对应平台的登录、账�
 
 ## 运行环境和数据
 
-源码运行需要 **Node.js 22.12 或以上版本**和 npm；Windows x64 便携包已包含运行环境。[使用教程](docs/TUTORIAL.md) 分别介绍便携版与源码版，仓库提供双击启动与停止脚本。源码不包含依赖、编译后的页面和便携 Node，第一次运行需要先安装依赖并构建。
+源码运行需要 **Node.js 22.12 或以上版本**，首次自动安装和构建还需 npm；Windows x64 便携包已包含运行环境。[使用教程](docs/TUTORIAL.md) 分别介绍便携版与源码版，仓库提供双击启动与停止脚本。Start 会自动准备源码缺少的前端依赖与页面，不要求用户先手动执行安装命令。
 
 账号和 Key 保存在本机的各平台数据目录中。服务只监听本机回环地址，适合同一台电脑上的客户端接入；登录、签到和模型调用会访问对应的平台服务。模型权限、可用额度与调用限制仍由平台和账号决定。
 

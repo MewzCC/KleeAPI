@@ -1,7 +1,8 @@
 import { readFile, access, mkdir, open, unlink } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
-import { resolve, join, sep } from 'node:path';
+import { resolve, join, sep, dirname, delimiter } from 'node:path';
+import { spawn } from 'node:child_process';
 import { root } from '../klee-api/app/config.mjs';
 
 /** 启动检查不读取账号，也不调用上游；配置文件允许用户修改。 */
@@ -35,4 +36,45 @@ export async function checkInstallation({ base = root, dev = false, nodeVersion 
     await handle.close();
     await unlink(probe);
   } catch { throw Error('当前文件夹无法写入，请把完整目录解压到桌面或自己的用户文件夹后再启动。'); }
+}
+
+async function readable(file) {
+  try { await access(file, constants.R_OK); return true; }
+  catch (error) { if (error.code === 'ENOENT') return false; throw error; }
+}
+
+async function runNpm(args, cwd) {
+  const directories = [dirname(process.execPath), ...(process.env.PATH || '').split(delimiter).filter(Boolean)];
+  const candidates = [process.env.npm_execpath, ...directories.flatMap(dir => [join(dir, 'node_modules/npm/bin/npm-cli.js'), join(dir, '../lib/node_modules/npm/bin/npm-cli.js'), join(dir, '../share/nodejs/npm/bin/npm-cli.js')])].filter(Boolean);
+  let cli;
+  for (const candidate of candidates) if (await readable(candidate)) { cli = candidate; break; }
+  if (!cli) throw Error('未找到 npm；请安装包含 npm 的 Node.js');
+  await new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [cli, ...args], { cwd, windowsHide: true, stdio: 'inherit', env: { ...process.env, PATH: dirname(process.execPath) + delimiter + (process.env.PATH || '') } });
+    child.once('error', reject);
+    child.once('exit', code => code === 0 ? resolve() : reject(Error('npm ' + args.join(' ') + ' 未完成（退出码 ' + code + '）')));
+  });
+}
+
+/** 源码首次启动自动准备缺少的依赖和页面；便携包仍按发布清单校验。 */
+export async function prepareInstallation({ base = root, dev = false, run = runNpm, log = console.log, ...options } = {}) {
+  if (await readable(join(base, 'release.json'))) return checkInstallation({ base, dev, ...options });
+  await checkInstallation({ base, dev: true, ...options });
+  const built = await readable(join(base, 'frontend/dist/index.html'));
+  if (!dev && built) return;
+  try {
+    const dependencies = ['vite/bin/vite.js', 'vue-tsc/bin/vue-tsc.js', 'typescript/lib/tsc.js'];
+    const installed = (await Promise.all(dependencies.map(path => readable(join(base, 'frontend/node_modules', path))))).every(Boolean);
+    if (!installed) {
+      log('首次启动：正在自动安装前端依赖，请等待完成…');
+      await run(['ci', '--include=dev'], join(base, 'frontend'));
+    }
+    if (!dev && !built) {
+      log('首次启动：正在自动构建管理页面…');
+      await run(['run', 'build'], join(base, 'frontend'));
+    }
+    await checkInstallation({ base, dev, ...options });
+  } catch (error) {
+    throw Error('自动安装或构建失败：' + error.message + '。请检查网络、文件夹写入权限和 npm；可安装完整的 Node.js 22.12+ 后重试，或下载已构建的 Windows 便携版：https://github.com/MewzCC/KleeAPI/releases', { cause: error });
+  }
 }
