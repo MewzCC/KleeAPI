@@ -49,6 +49,8 @@ npx --yes --package @playwright/cli@0.1.24 playwright-cli close
 
 自动模型检查使用独立的离线 mock，无需先运行 `mock-console.js`：`npx --yes --package @playwright/cli@0.1.24 playwright-cli run-code --filename=tests/browser/check-auto-models.js`。覆盖本地组的创建、编辑、启停、复制 ID、删除确认、候选搜索与平台筛选、键盘排序、保存失败及侧栏切换保留草稿、读取失败保留快照、健康信息不写回、损坏配置只读，以及深色/可莉主题的 1440 与 390 像素布局。所有账号与模型状态均为模拟数据。
 
+Key 恢复检查使用独立的离线 mock：`npx --yes --package @playwright/cli@0.1.24 playwright-cli run-code --filename=tests/browser/check-key-recovery.js`。覆盖首次空白直接自定义、旧 Key 失效直接自定义、正常清空不显示补填、报错后才显示可选补填、补填不写回服务端、失败保留原 Key 和窄屏布局；不会修改真实服务端 Key。
+
 模型目录检查使用 25 条模拟数据，验证网关和单平台的表格分页、跨页搜索、空结果、刷新后页码校正、每页条数、复制 ID、带入示例，以及两种主题的窄屏布局。
 
 平台余额检查验证 WorkBuddy、Trae、Qoder 的账号管理、账号概况和额度监控使用同一余额进度条，按真实总额度计算比例；刷新更新比例，额度查询失败清除旧比例，并检查窄屏布局。

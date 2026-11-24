@@ -6,6 +6,12 @@ import { decodeNativeAuth } from './native-auth.mjs';
 import { ApiError } from '../app/http.mjs';
 
 let system;
+const clientProfiles = { 1: ['Trae CN'], 2: ['TRAE SOLO CN', 'TraeWork CN'] };
+const roaming = () => process.env.APPDATA || join(homedir(), 'AppData', 'Roaming');
+async function activeLogin(appData, profile) {
+  const storage = await readFile(join(appData, profile, 'User', 'globalStorage', 'storage.json'), 'utf8').then(JSON.parse).catch(() => ({}));
+  return decodeNativeAuth(storage?.['iCubeAuthInfo://icube.cloudide']);
+}
 async function localSystem() {
   if (!system) system = (async () => {
     const result = { deviceBrand: '', deviceType: platform() === 'win32' ? 'windows' : platform() === 'darwin' ? 'mac' : platform(), osVersion: version() || type(), versions: {} };
@@ -19,14 +25,12 @@ async function localSystem() {
 }
 
 /** 仅复用本机官方客户端已登录同一账号的注册设备，不借用其他账号或生成新设备。 */
-export async function registeredDevice(reqSource, uid, appData = process.env.APPDATA || join(homedir(), 'AppData', 'Roaming')) {
+export async function registeredDevice(reqSource, uid, appData = roaming()) {
   if (!uid) return;
-  const profiles = reqSource === 1 ? ['Trae CN'] : ['TRAE SOLO CN', 'TraeWork CN'];
+  const profiles = clientProfiles[reqSource] || [];
   for (const profile of profiles) {
     const base = join(appData, profile);
-    const storage = await readFile(join(base, 'User', 'globalStorage', 'storage.json'), 'utf8').then(JSON.parse).catch(() => ({}));
-    if (!storage || typeof storage !== 'object') continue;
-    const active = decodeNativeAuth(storage['iCubeAuthInfo://icube.cloudide']);
+    const active = await activeLogin(appData, profile);
     // 必须校验当前登录记录，不能用历史设备密钥推断账号。
     if (!active || String(active.userId || '') !== uid || !active.account) continue;
     const logs = (await readdir(join(base, 'logs'), { withFileTypes: true }).catch(() => [])).filter(d => d.isDirectory() && /^\d{8}T\d{6}$/.test(d.name)).sort((a, b) => b.name.localeCompare(a.name));
@@ -60,8 +64,17 @@ export async function findRegisteredContext(account, appData) {
   }
 }
 
-export async function syncDevice(account) {
-  const binding = await findRegisteredContext(account);
-  if (!binding) throw new ApiError('未确认此账号的本机官方设备，请在 Trae CN 或 TraeWork 登录同一账号后同步',409,'trae_native_device_unavailable');
+export async function syncDevice(account, appData = roaming()) {
+  const binding = await findRegisteredContext(account, appData);
+  if (!binding) {
+    const logins = [];
+    for (const profile of Object.values(clientProfiles).flat()) {
+      const active = await activeLogin(appData, profile);
+      if (active) logins.push({ profile, uid: active.userId });
+    }
+    if (logins.some(login => login.uid === account.uid)) throw new ApiError('已确认本机登录同一账号，但未读取到官方注册设备。请完全退出并重新打开 TRAE 客户端，等待联网初始化后再同步；设备必须来自运行 KleeAPI 的这台电脑。', 409, 'trae_native_device_not_registered');
+    if (logins.length) throw new ApiError(`本机客户端登录账号与所选账号不一致：${logins.map(login => `${login.profile}（UID ${login.uid}）`).join('、')}；所选 UID ${account.uid}。请在运行 KleeAPI 的这台电脑登录所选账号；若刚切换账号，请完全退出并重新打开客户端后再同步。`, 409, 'trae_native_account_mismatch');
+    throw new ApiError('未读取到本机官方客户端的有效登录记录。请在运行 KleeAPI 的这台电脑上登录 Trae CN 或 TraeWork；若刚完成登录，请完全退出并重新打开客户端后再同步。',409,'trae_native_device_unavailable');
+  }
   return { ...await localDeviceContext(binding), ...binding };
 }

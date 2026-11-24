@@ -1,4 +1,5 @@
 import { serveFrontend } from "./web.mjs";
+import { localKey } from './local-key.mjs';
 import { readOnboarding, saveOnboarding } from './onboarding.mjs';
 import { createServer } from "node:http";
 import { readFileSync, existsSync, mkdirSync } from "node:fs";
@@ -1011,6 +1012,10 @@ export async function createGateway({
           ports: config.ports,
           onboarding: readOnboarding(base),
         });
+      if (req.method === 'POST' && path === '/api/key/local') return await localKey(req, res, origins, () => apiKey, value => {
+        if (!memoryKey) atomicWrite(keyFile, value + '\n');
+        apiKey = value;
+      });
       if (!authorized(token(req)))
         throw new ApiError("Invalid API key", 401, "invalid_api_key");
       if (path === '/api/gateway/auto-models' && req.method === 'GET') return json(res, 200, await autoModelSnapshot());

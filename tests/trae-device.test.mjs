@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import trae from '../klee-api/Klee-trae-web/provider.mjs';
-import { registeredDevice, findRegisteredContext } from '../klee-api/Klee-trae-web/device.mjs';
+import { registeredDevice, findRegisteredContext, syncDevice } from '../klee-api/Klee-trae-web/device.mjs';
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -98,4 +98,19 @@ test('explicit device sync uses the actual same-account client source without bo
   await writeFile(join(profile, 'logs', '20261110T120000', 'main.log'), '[ICDRS] (init) resolve rdid: 1234567890123456789');
   assert.deepEqual(await findRegisteredContext({ uid: 'same-account', reqSource: 2 }, dir), { reqSource: 1, deviceId: '1234567890123456789' });
   assert.equal(await findRegisteredContext({ uid: 'different-account', reqSource: 2 }, dir), undefined);
+  await assert.rejects(syncDevice({ uid: 'different-account', reqSource: 2 }, dir), error => error.code === 'trae_native_account_mismatch' && /same-account/.test(error.message) && /different-account/.test(error.message));
+  const binding = await syncDevice({ uid: 'same-account', reqSource: 2 }, dir);
+  assert.equal(binding.deviceId, '1234567890123456789');
+  assert.equal(binding.reqSource, 1);
+  assert.equal(binding.accessToken, undefined);
+});
+
+test('device sync distinguishes a matching login without a registered device from a missing login', async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'klee-trae-no-device-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const storageDir = join(dir, 'Trae CN', 'User', 'globalStorage');
+  await mkdir(storageDir, { recursive: true });
+  await assert.rejects(syncDevice({ uid: 'same-account' }, dir), error => error.code === 'trae_native_device_unavailable');
+  await writeFile(join(storageDir, 'storage.json'), JSON.stringify({ 'iCubeAuthInfo://icube.cloudide': { userId: 'same-account', account: {} } }));
+  await assert.rejects(syncDevice({ uid: 'same-account' }, dir), error => error.code === 'trae_native_device_not_registered');
 });

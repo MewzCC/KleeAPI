@@ -3,7 +3,7 @@ async (page) => {
   const errors = [], rotations = [];
   let failSave = false;
   page.on('pageerror', error => errors.push(error.message));
-  await page.context().route('**/api/key', async route => {
+  await page.context().route('**/api/key/local', async route => {
     rotations.push({ url: route.request().url(), body: route.request().postDataJSON(), authorization: await route.request().headerValue('authorization') });
     await route.fulfill({ status: failSave ? 500 : 200, json: failSave ? { error: { message: '模拟保存失败' } } : { ok: true } });
   });
@@ -34,7 +34,7 @@ async (page) => {
     assert(await panel.getByRole('checkbox', { name: '在此浏览器记住', exact: true }).isChecked(), 'Enable browser persistence');
     await panel.getByRole('button', { name: '保存并连接', exact: true }).click();
     await page.waitForFunction(([p, key]) => sessionStorage.getItem('klee.' + p) === key && localStorage.getItem('klee.' + p) === key, [platform, next]);
-    assert(rotations.at(-1).body.apiKey === next && rotations.at(-1).authorization === 'Bearer klee-offline-demo', 'Use the existing key to authorize rotation');
+    assert(rotations.at(-1).body.apiKey === next && !rotations.at(-1).authorization, 'Local customization does not require the old key');
     await panel.getByRole('button', { name: '复制已保存 Key', exact: true }).click();
     assert(await page.evaluate(() => window.__copiedKey) === next, 'Copy reflects the newly saved key');
     failSave = true;

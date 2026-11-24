@@ -11,7 +11,7 @@ async (page) => {
   await page.route('**/api/gateway/status**', route => keyRejected
     ? route.fulfill({ status: 401, json: { error: { message: 'API Key 无效' } } })
     : route.fulfill({ json: { accounts, models, platforms: [], fetchedAt: Date.now() } }));
-  await page.route('**/api/key', route => {
+  await page.route('**/api/key/local', route => {
     assert(route.request().method() === 'POST', 'Save the Key before connecting a platform account');
     keyRejected = false;
     return route.fulfill({ json: { ok: true } });
